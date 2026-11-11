@@ -7,40 +7,81 @@
 #include "fl/stl/cstring.h"  // For memcpy
 #include "fl/stl/malloc.h"   // For fl::malloc, fl::free, fl::realloc
 #include "fl/stl/noexcept.h"
+#ifdef FASTLED_TESTING
+#include "fl/stl/singleton.h"
+#endif
 
 namespace fl {
 
-// StringHolder implementations
-// Assumes fl::malloc/fl::realloc/fl::free cannot return NULL (OOM is terminal)
+#ifdef FASTLED_TESTING
+namespace {
+struct StringHolderGrowFailure {
+    bool fail = false;
+};
+}
 
-StringHolder::StringHolder(const char *str)
+bool StringHolder::setGrowFailureForTesting(bool fail) FL_NO_EXCEPT {
+    auto &state = Singleton<StringHolderGrowFailure>::instance();
+    const bool previous = state.fail;
+    state.fail = fail;
+    return previous;
+}
+#endif
+
+// StringHolder implementations
+//
+// OOM hardening (FastLED#3588): on classic ESP32 with WiFi + an HTTP
+// server active, free heap drops below 20 KB and fl::malloc genuinely
+// returns NULL. The previous "OOM is terminal" assumption turned that
+// into UB (writes through null; realloc leak plus null mData with a
+// stale nonzero capacity) and crashed unattended bench devices. On
+// failure a holder now degrades to a coherent empty state
+// (mData=null, mLength=0, mCapacity=0) and grow() keeps the old
+// buffer.
+
+StringHolder::StringHolder(const char *str) FL_NO_EXCEPT
     : mData((char*)fl::malloc(strlen(str) + 1))
     , mLength(strlen(str))
     , mCapacity(mLength + 1) {
+    if (mData == nullptr) {
+        mLength = 0;
+        mCapacity = 0;
+        return;
+    }
     fl::memcpy(mData, str, mLength);
     mData[mLength] = '\0';
 }
 
-StringHolder::StringHolder(size length)
+StringHolder::StringHolder(size length) FL_NO_EXCEPT
     : mData((char*)fl::malloc(length + 1))
     , mLength(length)
     , mCapacity(length + 1) {
+    if (mData == nullptr) {
+        mLength = 0;
+        mCapacity = 0;
+        return;
+    }
     mData[mLength] = '\0';
 }
 
-StringHolder::StringHolder(const char *str, size length)
+StringHolder::StringHolder(const char *str, size length) FL_NO_EXCEPT
     : mData((char*)fl::malloc(length + 1))
     , mLength(length)
     , mCapacity(length + 1) {
+    if (mData == nullptr) {
+        mLength = 0;
+        mCapacity = 0;
+        return;
+    }
     fl::memcpy(mData, str, mLength);
     mData[mLength] = '\0';
 }
 
-StringHolder::~StringHolder() FL_NOEXCEPT {
+StringHolder::~StringHolder() FL_DTOR_NOEXCEPT {
     fl::free(mData); // Release the memory
 }
 
-void StringHolder::grow(size newLength) {
+void StringHolder::grow(size newLength) FL_NO_EXCEPT {
     if (newLength + 1 <= mCapacity) {
         // We have enough capacity for newLength + null terminator
         mLength = newLength;
@@ -48,9 +89,20 @@ void StringHolder::grow(size newLength) {
         return;
     }
 
-    // Use fl::realloc for efficient growth without memory move
-    // fl::realloc may expand in place or copy to larger block as needed
-    mData = (char*)fl::realloc(mData, newLength + 1);
+    // Use fl::realloc for efficient growth without memory move.
+    // Keep the old buffer if the allocation fails — the string simply
+    // does not grow (callers observe the unchanged length).
+    char *grown = nullptr;
+#ifdef FASTLED_TESTING
+    if (!Singleton<StringHolderGrowFailure>::instance().fail)
+#endif
+    {
+        grown = (char*)fl::realloc(mData, newLength + 1);
+    }
+    if (grown == nullptr) {
+        return;
+    }
+    mData = grown;
     mLength = newLength;
     mCapacity = newLength + 1;
     mData[mLength] = '\0'; // Ensure null-termination

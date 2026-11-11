@@ -38,12 +38,12 @@ class I2S_Audio : public audio::IInput {
   public:
     using I2SContext = esp_i2s::I2SContext;
 
-    I2S_Audio(const audio::ConfigI2S &config)
+    I2S_Audio(const audio::ConfigI2S &config) FL_NO_EXCEPT
         : mStdConfig(config), mHasError(false), mTotalSamplesRead(0) {}
 
     ~I2S_Audio() { stop(); }
 
-    void start() FL_NOEXCEPT override {
+    void start() FL_NO_EXCEPT override {
         if (mI2sContextOpt) {
             FL_WARN("I2S channel is already initialized");
             return;
@@ -53,7 +53,7 @@ class I2S_Audio : public audio::IInput {
         mTotalSamplesRead = 0;  // Reset sample counter on start
     }
 
-    void stop() FL_NOEXCEPT override {
+    void stop() FL_NO_EXCEPT override {
         if (!mI2sContextOpt) {
             return;
         }
@@ -62,14 +62,14 @@ class I2S_Audio : public audio::IInput {
         mTotalSamplesRead = 0;  // Reset sample counter on stop
     }
 
-    bool error(fl::string *msg = nullptr) FL_NOEXCEPT override {
+    bool error(fl::string *msg = nullptr) FL_NO_EXCEPT override {
         if (msg && mHasError) {
             *msg = mErrorMessage;
         }
         return mHasError;
     }
 
-    audio::Sample read() FL_NOEXCEPT override {
+    audio::Sample read() FL_NO_EXCEPT override {
         if (!mI2sContextOpt) {
             FL_WARN("I2S channel is not initialized");
             return audio::Sample();  // Invalid sample
@@ -90,7 +90,7 @@ class I2S_Audio : public audio::IInput {
         // Update total samples counter
         mTotalSamplesRead += samples_read;
 
-        fl::span<const i16> data(buf, samples_read);
+        fl::span<const i16> data{buf, static_cast<fl::size>(samples_read)};
         
         // Create audio::Sample with pooled audio::SampleImpl (pooling handled internally)
         return audio::Sample(data, timestamp_ms);

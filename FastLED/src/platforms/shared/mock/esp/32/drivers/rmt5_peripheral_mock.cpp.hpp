@@ -41,7 +41,7 @@ struct MockChannel {
     void* user_ctx;
 
     MockChannel()
- FL_NOEXCEPT : id(0), config(), enabled(false), callback(nullptr), user_ctx(nullptr) {}
+ FL_NO_EXCEPT : id(0), config(), enabled(false), callback(nullptr), user_ctx(nullptr) {}
 };
 
 struct MockEncoder {
@@ -50,7 +50,7 @@ struct MockEncoder {
     u32 resolution_hz;
 
     MockEncoder()
- FL_NOEXCEPT : id(0), timing(), resolution_hz(0) {}
+ FL_NO_EXCEPT : id(0), timing(), resolution_hz(0) {}
 };
 
 //=============================================================================
@@ -67,7 +67,7 @@ public:
     // Lifecycle
     //=========================================================================
 
-    Rmt5PeripheralMockImpl() FL_NOEXCEPT;
+    Rmt5PeripheralMockImpl() FL_NO_EXCEPT;
     ~Rmt5PeripheralMockImpl() override;
 
     //=========================================================================
@@ -75,39 +75,44 @@ public:
     //=========================================================================
 
     bool createTxChannel(const Rmt5ChannelConfig& config,
-                         void** out_handle) FL_NOEXCEPT override;
-    bool deleteChannel(void* channel_handle) FL_NOEXCEPT override;
-    bool enableChannel(void* channel_handle) FL_NOEXCEPT override;
-    bool disableChannel(void* channel_handle) FL_NOEXCEPT override;
+                         void** out_handle) FL_NO_EXCEPT override;
+    bool deleteChannel(void* channel_handle) FL_NO_EXCEPT override;
+    bool enableChannel(void* channel_handle) FL_NO_EXCEPT override;
+    bool disableChannel(void* channel_handle) FL_NO_EXCEPT override;
     bool transmit(void* channel_handle, void* encoder_handle,
-                  const u8* buffer, size_t buffer_size) FL_NOEXCEPT override;
-    bool waitAllDone(void* channel_handle, u32 timeout_ms) FL_NOEXCEPT override;
+                  const u8* buffer, size_t buffer_size) FL_NO_EXCEPT override;
+    bool waitAllDone(void* channel_handle, u32 timeout_ms) FL_NO_EXCEPT override;
     void* createEncoder(const ChipsetTiming& timing,
-                        u32 resolution_hz) FL_NOEXCEPT override;
-    void deleteEncoder(void* encoder_handle) FL_NOEXCEPT override;
-    bool resetEncoder(void* encoder_handle) FL_NOEXCEPT override;
+                        u32 resolution_hz) FL_NO_EXCEPT override;
+    void deleteEncoder(void* encoder_handle) FL_NO_EXCEPT override;
+    bool resetEncoder(void* encoder_handle) FL_NO_EXCEPT override;
     bool registerTxCallback(void* channel_handle,
                             Rmt5TxDoneCallback callback,
-                            void* user_ctx) FL_NOEXCEPT override;
-    void configureLogging() FL_NOEXCEPT override;
-    bool syncCache(void* buffer, size_t size) FL_NOEXCEPT override;
-    u8* allocateDmaBuffer(size_t size) FL_NOEXCEPT override;
-    void freeDmaBuffer(u8* buffer) FL_NOEXCEPT override;
+                            void* user_ctx) FL_NO_EXCEPT override;
+    void configureLogging() FL_NO_EXCEPT override;
+    bool syncCache(void* buffer, size_t size) FL_NO_EXCEPT override;
+    u8* allocateDmaBuffer(size_t size) FL_NO_EXCEPT override;
+    void freeDmaBuffer(u8* buffer) FL_NO_EXCEPT override;
+    u32 getPinRouting(int pin) FL_NO_EXCEPT override;
+    bool rebindTxPin(void* channel_handle, int pin) FL_NO_EXCEPT override;
 
     //=========================================================================
     // Mock-Specific API
     //=========================================================================
 
-    void simulateTransmitDone(void* channel_handle) FL_NOEXCEPT override;
-    void setTransmitFailure(bool should_fail) FL_NOEXCEPT override;
-    const fl::vector<TransmissionRecord>& getTransmissionHistory() const FL_NOEXCEPT override;
-    void clearTransmissionHistory() FL_NOEXCEPT override;
-    fl::span<const u8> getLastTransmissionData() const FL_NOEXCEPT override;
-    size_t getChannelCount() const FL_NOEXCEPT override;
-    size_t getEncoderCount() const FL_NOEXCEPT override;
-    size_t getTransmissionCount() const FL_NOEXCEPT override;
-    bool isChannelEnabled(void* channel_handle) const FL_NOEXCEPT override;
-    void reset() FL_NOEXCEPT override;
+    void simulateTransmitDone(void* channel_handle) FL_NO_EXCEPT override;
+    void setTransmitFailure(bool should_fail) FL_NO_EXCEPT override;
+    void setMaxChannels(size_t max_channels) FL_NO_EXCEPT override;
+    void simulatePinReroute(int pin) FL_NO_EXCEPT override;
+    size_t getPinRebindCount() const FL_NO_EXCEPT override;
+    const fl::vector<TransmissionRecord>& getTransmissionHistory() const FL_NO_EXCEPT override;
+    void clearTransmissionHistory() FL_NO_EXCEPT override;
+    fl::span<const u8> getLastTransmissionData() const FL_NO_EXCEPT override;
+    size_t getChannelCount() const FL_NO_EXCEPT override;
+    size_t getEncoderCount() const FL_NO_EXCEPT override;
+    size_t getTransmissionCount() const FL_NO_EXCEPT override;
+    bool isChannelEnabled(void* channel_handle) const FL_NO_EXCEPT override;
+    void reset() FL_NO_EXCEPT override;
 
 private:
     //=========================================================================
@@ -122,23 +127,29 @@ private:
 
     // Simulation settings
     bool mShouldFailTransmit;
+    size_t mMaxChannels;  // 0 = unlimited
+
+    // Pin routing: the channel id that owns each pin, or kOtherPeripheral
+    fl::flat_map<fl::i32, u32> mPinRouting;
+    size_t mPinRebindCount;
+    static constexpr u32 kOtherPeripheral = 0x8000u;
 
     // Waveform capture
     fl::vector<TransmissionRecord> mHistory;
     size_t mTransmissionCount;
 
     // Helper methods
-    MockChannel* findChannel(void* handle) FL_NOEXCEPT;
-    const MockChannel* findChannel(void* handle) const FL_NOEXCEPT;
-    MockEncoder* findEncoder(void* handle) FL_NOEXCEPT;
-    const MockEncoder* findEncoder(void* handle) const FL_NOEXCEPT;
+    MockChannel* findChannel(void* handle) FL_NO_EXCEPT;
+    const MockChannel* findChannel(void* handle) const FL_NO_EXCEPT;
+    MockEncoder* findEncoder(void* handle) FL_NO_EXCEPT;
+    const MockEncoder* findEncoder(void* handle) const FL_NO_EXCEPT;
 };
 
 //=============================================================================
 // Singleton Instance
 //=============================================================================
 
-Rmt5PeripheralMock& Rmt5PeripheralMock::instance() FL_NOEXCEPT {
+Rmt5PeripheralMock& Rmt5PeripheralMock::instance() FL_NO_EXCEPT {
     return Singleton<Rmt5PeripheralMockImpl>::instance();
 }
 
@@ -147,11 +158,14 @@ Rmt5PeripheralMock& Rmt5PeripheralMock::instance() FL_NOEXCEPT {
 //=============================================================================
 
 Rmt5PeripheralMockImpl::Rmt5PeripheralMockImpl()
- FL_NOEXCEPT : mChannels(),
+ FL_NO_EXCEPT : mChannels(),
       mEncoders(),
       mNextChannelId(1),
       mNextEncoderId(1),
       mShouldFailTransmit(false),
+      mMaxChannels(0),
+      mPinRouting(),
+      mPinRebindCount(0),
       mHistory(),
       mTransmissionCount(0) {
 }
@@ -170,7 +184,7 @@ Rmt5PeripheralMockImpl::~Rmt5PeripheralMockImpl() {
 // Helper Methods
 //=============================================================================
 
-MockChannel* Rmt5PeripheralMockImpl::findChannel(void* handle) FL_NOEXCEPT {
+MockChannel* Rmt5PeripheralMockImpl::findChannel(void* handle) FL_NO_EXCEPT {
     if (handle == nullptr) {
         return nullptr;
     }
@@ -183,7 +197,7 @@ MockChannel* Rmt5PeripheralMockImpl::findChannel(void* handle) FL_NOEXCEPT {
     return it->second;  // Return the stored pointer directly
 }
 
-const MockChannel* Rmt5PeripheralMockImpl::findChannel(void* handle) const FL_NOEXCEPT {
+const MockChannel* Rmt5PeripheralMockImpl::findChannel(void* handle) const FL_NO_EXCEPT {
     if (handle == nullptr) {
         return nullptr;
     }
@@ -195,7 +209,7 @@ const MockChannel* Rmt5PeripheralMockImpl::findChannel(void* handle) const FL_NO
     return it->second;  // Return the stored pointer directly
 }
 
-MockEncoder* Rmt5PeripheralMockImpl::findEncoder(void* handle) FL_NOEXCEPT {
+MockEncoder* Rmt5PeripheralMockImpl::findEncoder(void* handle) FL_NO_EXCEPT {
     if (handle == nullptr) {
         return nullptr;
     }
@@ -207,7 +221,7 @@ MockEncoder* Rmt5PeripheralMockImpl::findEncoder(void* handle) FL_NOEXCEPT {
     return it->second;  // Return the stored pointer directly
 }
 
-const MockEncoder* Rmt5PeripheralMockImpl::findEncoder(void* handle) const FL_NOEXCEPT {
+const MockEncoder* Rmt5PeripheralMockImpl::findEncoder(void* handle) const FL_NO_EXCEPT {
     if (handle == nullptr) {
         return nullptr;
     }
@@ -224,7 +238,7 @@ const MockEncoder* Rmt5PeripheralMockImpl::findEncoder(void* handle) const FL_NO
 //=============================================================================
 
 bool Rmt5PeripheralMockImpl::createTxChannel(const Rmt5ChannelConfig& config,
-                                               void** out_handle) FL_NOEXCEPT {
+                                               void** out_handle) FL_NO_EXCEPT {
     if (out_handle == nullptr) {
         FL_WARN("Rmt5PeripheralMock: out_handle is nullptr");
         return false;
@@ -233,6 +247,10 @@ bool Rmt5PeripheralMockImpl::createTxChannel(const Rmt5ChannelConfig& config,
     // Validate config
     if (config.gpio_num < 0) {
         FL_WARN("Rmt5PeripheralMock: Invalid GPIO pin: " << config.gpio_num);
+        return false;
+    }
+    if (mMaxChannels != 0 && mChannels.size() >= mMaxChannels) {
+        FL_DBG("RMT5_MOCK: TX channel limit reached (" << mMaxChannels << ")");
         return false;
     }
 
@@ -246,18 +264,17 @@ bool Rmt5PeripheralMockImpl::createTxChannel(const Rmt5ChannelConfig& config,
     channel->user_ctx = nullptr;
 
     mChannels[channel_id] = channel;
+    mPinRouting[config.gpio_num] = static_cast<u32>(channel_id);
 
     // Return opaque handle
     *out_handle = fl::bit_cast<void*>(static_cast<intptr_t>(channel_id));
 
-    FL_DBG("RMT5_MOCK: Created TX channel " << channel_id
-           << " on GPIO " << config.gpio_num
-           << " (DMA: " << config.with_dma << ") handle=" << *out_handle);
+    FL_DBG("RMT5_MOCK: Created TX channel " << channel_id << " on GPIO " << config.gpio_num << " (DMA: " << config.with_dma << ") handle=" << (*out_handle));
 
     return true;
 }
 
-bool Rmt5PeripheralMockImpl::deleteChannel(void* channel_handle) FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::deleteChannel(void* channel_handle) FL_NO_EXCEPT {
     MockChannel* channel = findChannel(channel_handle);
     if (channel == nullptr) {
         FL_WARN("Rmt5PeripheralMock: Invalid channel handle");
@@ -272,7 +289,7 @@ bool Rmt5PeripheralMockImpl::deleteChannel(void* channel_handle) FL_NOEXCEPT {
     return true;
 }
 
-bool Rmt5PeripheralMockImpl::enableChannel(void* channel_handle) FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::enableChannel(void* channel_handle) FL_NO_EXCEPT {
     MockChannel* channel = findChannel(channel_handle);
     if (channel == nullptr) {
         FL_WARN("Rmt5PeripheralMock: Invalid channel handle");
@@ -284,7 +301,7 @@ bool Rmt5PeripheralMockImpl::enableChannel(void* channel_handle) FL_NOEXCEPT {
     return true;
 }
 
-bool Rmt5PeripheralMockImpl::disableChannel(void* channel_handle) FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::disableChannel(void* channel_handle) FL_NO_EXCEPT {
     MockChannel* channel = findChannel(channel_handle);
     if (channel == nullptr) {
         FL_WARN("Rmt5PeripheralMock: Invalid channel handle");
@@ -301,7 +318,7 @@ bool Rmt5PeripheralMockImpl::disableChannel(void* channel_handle) FL_NOEXCEPT {
 //=============================================================================
 
 bool Rmt5PeripheralMockImpl::transmit(void* channel_handle, void* encoder_handle,
-                                       const u8* buffer, size_t buffer_size) FL_NOEXCEPT {
+                                       const u8* buffer, size_t buffer_size) FL_NO_EXCEPT {
     // Error injection
     if (mShouldFailTransmit) {
         FL_WARN("Rmt5PeripheralMock: Transmit failure injected");
@@ -349,13 +366,12 @@ bool Rmt5PeripheralMockImpl::transmit(void* channel_handle, void* encoder_handle
     mHistory.push_back(record);
     mTransmissionCount++;
 
-    FL_DBG("RMT5_MOCK: Transmitted " << buffer_size << " bytes on channel "
-           << channel->id << " (pin " << channel->config.gpio_num << ")");
+    FL_DBG("RMT5_MOCK: Transmitted " << buffer_size << " bytes on channel " << channel->id << " (pin " << channel->config.gpio_num << ")");
 
     return true;
 }
 
-bool Rmt5PeripheralMockImpl::waitAllDone(void* channel_handle, u32 timeout_ms) FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::waitAllDone(void* channel_handle, u32 timeout_ms) FL_NO_EXCEPT {
     (void)timeout_ms;  // Mock always returns immediately
 
     MockChannel* channel = findChannel(channel_handle);
@@ -376,7 +392,7 @@ bool Rmt5PeripheralMockImpl::waitAllDone(void* channel_handle, u32 timeout_ms) F
 
 bool Rmt5PeripheralMockImpl::registerTxCallback(void* channel_handle,
                                                  Rmt5TxDoneCallback callback,
-                                                 void* user_ctx) FL_NOEXCEPT {
+                                                 void* user_ctx) FL_NO_EXCEPT {
     MockChannel* channel = findChannel(channel_handle);
     if (channel == nullptr) {
         FL_WARN("Rmt5PeripheralMock: Invalid channel handle");
@@ -394,12 +410,12 @@ bool Rmt5PeripheralMockImpl::registerTxCallback(void* channel_handle,
 // Platform Configuration
 //=============================================================================
 
-void Rmt5PeripheralMockImpl::configureLogging() FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::configureLogging() FL_NO_EXCEPT {
     // Mock implementation: No-op (host platforms don't have ESP-IDF logging)
     FL_DBG("RMT5_MOCK: Logging configuration (no-op on mock platform)");
 }
 
-bool Rmt5PeripheralMockImpl::syncCache(void* buffer, size_t size) FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::syncCache(void* buffer, size_t size) FL_NO_EXCEPT {
     // Mock implementation: No-op (host platforms don't have DMA or cache sync)
     (void)buffer;
     (void)size;
@@ -412,7 +428,7 @@ bool Rmt5PeripheralMockImpl::syncCache(void* buffer, size_t size) FL_NOEXCEPT {
 //=============================================================================
 
 void* Rmt5PeripheralMockImpl::createEncoder(const ChipsetTiming& timing,
-                                              u32 resolution_hz) FL_NOEXCEPT {
+                                              u32 resolution_hz) FL_NO_EXCEPT {
     // Create mock encoder
     int encoder_id = mNextEncoderId++;
     MockEncoder* encoder = new MockEncoder();  // ok bare allocation
@@ -425,13 +441,12 @@ void* Rmt5PeripheralMockImpl::createEncoder(const ChipsetTiming& timing,
     // Return opaque handle
     void* handle = fl::bit_cast<void*>(static_cast<intptr_t>(encoder_id));
 
-    FL_DBG("RMT5_MOCK: Created encoder " << encoder_id
-           << " (resolution: " << resolution_hz << " Hz)");
+    FL_DBG("RMT5_MOCK: Created encoder " << encoder_id << " (resolution: " << resolution_hz << " Hz)");
 
     return handle;
 }
 
-void Rmt5PeripheralMockImpl::deleteEncoder(void* encoder_handle) FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::deleteEncoder(void* encoder_handle) FL_NO_EXCEPT {
     MockEncoder* encoder = findEncoder(encoder_handle);
     if (encoder == nullptr) {
         return;  // Safe no-op
@@ -444,7 +459,7 @@ void Rmt5PeripheralMockImpl::deleteEncoder(void* encoder_handle) FL_NOEXCEPT {
     FL_DBG("RMT5_MOCK: Deleted encoder " << id);
 }
 
-bool Rmt5PeripheralMockImpl::resetEncoder(void* encoder_handle) FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::resetEncoder(void* encoder_handle) FL_NO_EXCEPT {
     MockEncoder* encoder = findEncoder(encoder_handle);
     if (encoder == nullptr) {
         FL_WARN("Rmt5PeripheralMock: Invalid encoder handle");
@@ -460,7 +475,7 @@ bool Rmt5PeripheralMockImpl::resetEncoder(void* encoder_handle) FL_NOEXCEPT {
 // DMA Memory Management
 //=============================================================================
 
-u8* Rmt5PeripheralMockImpl::allocateDmaBuffer(size_t size) FL_NOEXCEPT {
+u8* Rmt5PeripheralMockImpl::allocateDmaBuffer(size_t size) FL_NO_EXCEPT {
     if (size == 0) {
         FL_WARN("Rmt5PeripheralMock: Cannot allocate zero-size buffer");
         return nullptr;
@@ -474,8 +489,7 @@ u8* Rmt5PeripheralMockImpl::allocateDmaBuffer(size_t size) FL_NOEXCEPT {
     u8* buffer = static_cast<u8*>(fl::aligned_alloc(alignment, aligned_size));
 
     if (buffer == nullptr) {
-        FL_WARN("Rmt5PeripheralMock: Failed to allocate DMA buffer ("
-                << aligned_size << " bytes)");
+        FL_WARN("Rmt5PeripheralMock: Failed to allocate DMA buffer (" << aligned_size << " bytes)");
         return nullptr;
     }
 
@@ -483,7 +497,7 @@ u8* Rmt5PeripheralMockImpl::allocateDmaBuffer(size_t size) FL_NOEXCEPT {
     return buffer;
 }
 
-void Rmt5PeripheralMockImpl::freeDmaBuffer(u8* buffer) FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::freeDmaBuffer(u8* buffer) FL_NO_EXCEPT {
     if (buffer == nullptr) {
         return;  // Safe no-op
     }
@@ -493,11 +507,27 @@ void Rmt5PeripheralMockImpl::freeDmaBuffer(u8* buffer) FL_NOEXCEPT {
     FL_DBG("RMT5_MOCK: Freed DMA buffer");
 }
 
+u32 Rmt5PeripheralMockImpl::getPinRouting(int pin) FL_NO_EXCEPT {
+    auto it = mPinRouting.find(pin);
+    return it == mPinRouting.end() ? kPinRoutingUnknown : it->second;
+}
+
+bool Rmt5PeripheralMockImpl::rebindTxPin(void* channel_handle, int pin) FL_NO_EXCEPT {
+    MockChannel* channel = findChannel(channel_handle);
+    if (channel == nullptr) {
+        return false;
+    }
+    channel->config.gpio_num = pin;
+    mPinRouting[pin] = static_cast<u32>(channel->id);
+    mPinRebindCount++;
+    return true;
+}
+
 //=============================================================================
 // Mock-Specific API
 //=============================================================================
 
-void Rmt5PeripheralMockImpl::simulateTransmitDone(void* channel_handle) FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::simulateTransmitDone(void* channel_handle) FL_NO_EXCEPT {
     MockChannel* channel = findChannel(channel_handle);
     if (channel == nullptr) {
         FL_WARN("Rmt5PeripheralMock: Invalid channel handle");
@@ -514,22 +544,34 @@ void Rmt5PeripheralMockImpl::simulateTransmitDone(void* channel_handle) FL_NOEXC
     channel->callback(channel_handle, nullptr, channel->user_ctx);
 }
 
-void Rmt5PeripheralMockImpl::setTransmitFailure(bool should_fail) FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::setTransmitFailure(bool should_fail) FL_NO_EXCEPT {
     mShouldFailTransmit = should_fail;
-    FL_DBG("RMT5_MOCK: Transmit failure " << (should_fail ? "enabled" : "disabled"));
+    FL_DBG("RMT5_MOCK: Transmit failure " << ((should_fail ? "enabled" : "disabled")));
+}
+
+void Rmt5PeripheralMockImpl::setMaxChannels(size_t max_channels) FL_NO_EXCEPT {
+    mMaxChannels = max_channels;
+}
+
+void Rmt5PeripheralMockImpl::simulatePinReroute(int pin) FL_NO_EXCEPT {
+    mPinRouting[pin] = kOtherPeripheral;
+}
+
+size_t Rmt5PeripheralMockImpl::getPinRebindCount() const FL_NO_EXCEPT {
+    return mPinRebindCount;
 }
 
 const fl::vector<Rmt5PeripheralMock::TransmissionRecord>&
-Rmt5PeripheralMockImpl::getTransmissionHistory() const FL_NOEXCEPT {
+Rmt5PeripheralMockImpl::getTransmissionHistory() const FL_NO_EXCEPT {
     return mHistory;
 }
 
-void Rmt5PeripheralMockImpl::clearTransmissionHistory() FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::clearTransmissionHistory() FL_NO_EXCEPT {
     mHistory.clear();
     FL_DBG("RMT5_MOCK: Cleared transmission history");
 }
 
-fl::span<const u8> Rmt5PeripheralMockImpl::getLastTransmissionData() const FL_NOEXCEPT {
+fl::span<const u8> Rmt5PeripheralMockImpl::getLastTransmissionData() const FL_NO_EXCEPT {
     if (mHistory.empty()) {
         return fl::span<const u8>();
     }
@@ -537,19 +579,19 @@ fl::span<const u8> Rmt5PeripheralMockImpl::getLastTransmissionData() const FL_NO
     return last.buffer_copy;
 }
 
-size_t Rmt5PeripheralMockImpl::getChannelCount() const FL_NOEXCEPT {
+size_t Rmt5PeripheralMockImpl::getChannelCount() const FL_NO_EXCEPT {
     return mChannels.size();
 }
 
-size_t Rmt5PeripheralMockImpl::getEncoderCount() const FL_NOEXCEPT {
+size_t Rmt5PeripheralMockImpl::getEncoderCount() const FL_NO_EXCEPT {
     return mEncoders.size();
 }
 
-size_t Rmt5PeripheralMockImpl::getTransmissionCount() const FL_NOEXCEPT {
+size_t Rmt5PeripheralMockImpl::getTransmissionCount() const FL_NO_EXCEPT {
     return mTransmissionCount;
 }
 
-bool Rmt5PeripheralMockImpl::isChannelEnabled(void* channel_handle) const FL_NOEXCEPT {
+bool Rmt5PeripheralMockImpl::isChannelEnabled(void* channel_handle) const FL_NO_EXCEPT {
     const MockChannel* channel = findChannel(channel_handle);
     if (channel == nullptr) {
         return false;
@@ -557,7 +599,7 @@ bool Rmt5PeripheralMockImpl::isChannelEnabled(void* channel_handle) const FL_NOE
     return channel->enabled;
 }
 
-void Rmt5PeripheralMockImpl::reset() FL_NOEXCEPT {
+void Rmt5PeripheralMockImpl::reset() FL_NO_EXCEPT {
     // Delete all allocated channels
     for (auto pair : mChannels) {
         delete pair.second;  // ok bare allocation
@@ -574,6 +616,9 @@ void Rmt5PeripheralMockImpl::reset() FL_NOEXCEPT {
     mNextChannelId = 1;
     mNextEncoderId = 1;
     mShouldFailTransmit = false;
+    mMaxChannels = 0;
+    mPinRouting.clear();
+    mPinRebindCount = 0;
     mTransmissionCount = 0;
 
     FL_DBG("RMT5_MOCK: Reset to initial state");

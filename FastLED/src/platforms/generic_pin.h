@@ -29,7 +29,7 @@ class Pin : public Selectable {
 
 	/// Initialize the class by retrieving the register
 	/// pointers and bitmask.
-	void _init() FL_NOEXCEPT {
+	void _init() FL_NO_EXCEPT {
 		#if defined(ARDUINO_ARCH_ZEPHYR) && (defined(ARDUINO_UNO_Q) || defined(CONFIG_BOARD_ARDUINO_UNO_Q) || defined(CONFIG_SOC_STM32U585XX))
 		mPinMask = 1;
 		mPort = nullptr;
@@ -59,25 +59,25 @@ public:
 	typedef typename fl::remove_cv<RwReg>::type port_t;  ///< type for a pin read/write register, non-volatile
 
 	/// Set the pin mode as `OUTPUT`
-	inline void setOutput() { pinMode(mPin, PinMode::Output); }
+	inline void setOutput() { (fl::pinMode)(mPin, PinMode::Output); }
 
 	/// Set the pin mode as `INPUT`
-	inline void setInput() { pinMode(mPin, PinMode::Input); }
+	inline void setInput() { (fl::pinMode)(mPin, PinMode::Input); }
 
-	inline void setInputPullup() { pinMode(mPin, PinMode::InputPullup); }
+	inline void setInputPullup() { (fl::pinMode)(mPin, PinMode::InputPullup); }
 
 	/// Set the pin state to `HIGH`
 	FL_DISABLE_WARNING_PUSH
 	FL_DISABLE_WARNING_NULL_DEREFERENCE
 	FL_DISABLE_WARNING_VOLATILE
-	inline void hi() FL_NOEXCEPT __attribute__ ((always_inline)) {
+	inline void hi() FL_NO_EXCEPT __attribute__ ((always_inline)) {
 		if (mPort) { *mPort |= mPinMask; }
-		else { digitalWrite(mPin, PinValue::High); }
+		else { (fl::digitalWrite)(mPin, PinValue::High); }
 	}
 	/// Set the pin state to `LOW`
-	inline void lo() FL_NOEXCEPT __attribute__ ((always_inline)) {
+	inline void lo() FL_NO_EXCEPT __attribute__ ((always_inline)) {
 		if (mPort) { *mPort &= ~mPinMask; }
-		else { digitalWrite(mPin, PinValue::Low); }
+		else { (fl::digitalWrite)(mPin, PinValue::Low); }
 	}
 	FL_DISABLE_WARNING_POP
 
@@ -85,11 +85,11 @@ public:
 	inline void strobe() __attribute__ ((always_inline)) { toggle(); toggle(); }
 	/// Toggle the pin.
 	/// If the pin was high, set it low. If was low, set it high.
-	inline void toggle() FL_NOEXCEPT __attribute__ ((always_inline)) {
+	inline void toggle() FL_NO_EXCEPT __attribute__ ((always_inline)) {
 		if (mInPort) { *mInPort = mPinMask; }
 		else {
-			PinValue current = digitalRead(mPin);
-			digitalWrite(mPin, current == PinValue::High ? PinValue::Low : PinValue::High);
+			PinValue current = (fl::digitalRead)(mPin);
+			(fl::digitalWrite)(mPin, current == PinValue::High ? PinValue::Low : PinValue::High);
 		}
 	}
 
@@ -117,7 +117,7 @@ public:
 	/// Gets the state of the port with this pin `HIGH`
 	FL_DISABLE_WARNING_PUSH
 	FL_DISABLE_WARNING_VOLATILE
-	port_t hival() FL_NOEXCEPT __attribute__ ((always_inline)) {
+	port_t hival() FL_NO_EXCEPT __attribute__ ((always_inline)) {
 		if (mPort) { return *mPort | mPinMask; }
 		else { return 1; }  // Return 1 (HIGH equivalent)
 	}
@@ -125,7 +125,7 @@ public:
 	/// Gets the state of the port with this pin `LOW`
 	FL_DISABLE_WARNING_PUSH
 	FL_DISABLE_WARNING_VOLATILE
-	port_t loval() FL_NOEXCEPT __attribute__ ((always_inline)) {
+	port_t loval() FL_NO_EXCEPT __attribute__ ((always_inline)) {
 		if (mPort) { return *mPort & ~mPinMask; }
 		else { return 0; }  // Return 0 (LOW equivalent)
 	}
@@ -140,13 +140,13 @@ public:
 	FL_DISABLE_WARNING_POP
 
 	/// @copydoc Pin::hi()
-	virtual void select() override { hi(); }
+	virtual void select() FL_NO_EXCEPT override { hi(); }
 	/// @copydoc Pin::lo()
-	virtual void release() override { lo(); }
+	virtual void release() FL_NO_EXCEPT override { lo(); }
 	/// Checks if the pin is currently `HIGH`
-	virtual bool isSelected() FL_NOEXCEPT override {
+	virtual bool isSelected() FL_NO_EXCEPT override {
 		if (mPort) { return (*mPort & mPinMask) == mPinMask; }
-		else { return digitalRead(mPin) == PinValue::High; }
+		else { return (fl::digitalRead)(mPin) == PinValue::High; }
 	}
 };
 

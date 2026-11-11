@@ -14,6 +14,7 @@
 #include "fl/stl/tuple.h"
 #include "fl/stl/unordered_map.h"
 #include "fl/stl/vector.h"
+#include "fl/stl/noexcept.h"
 
 namespace fl {
 
@@ -21,8 +22,24 @@ namespace fl {
 // Rpc::setResponseSink() - Set response sink for async ACKs
 // =============================================================================
 
-void Rpc::setResponseSink(fl::function<void(const fl::json&)> sink) {
+void Rpc::setResponseSink(fl::function<void(const fl::json&)> sink) FL_NO_EXCEPT {
     mResponseSink = fl::move(sink);
+}
+
+void Rpc::setResponseStreamAvailable(fl::function<bool()> available) FL_NO_EXCEPT {
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+    mResponseStreamAvailable = fl::move(available);
+#else
+    (void)available;
+#endif
+}
+
+void Rpc::setResponseStreamSink(fl::ResponseStreamSink sink) FL_NO_EXCEPT {
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+    mResponseStreamSink = fl::move(sink);
+#else
+    (void)sink;
+#endif
 }
 
 // =============================================================================
@@ -31,7 +48,7 @@ void Rpc::setResponseSink(fl::function<void(const fl::json&)> sink) {
 
 void Rpc::bindAsync(const char* name,
                    fl::function<void(ResponseSend&, const json&)> fn,
-                   fl::RpcMode mode) {
+                   fl::RpcMode mode) FL_NO_EXCEPT {
     fl::string key(name);
 
     detail::RpcEntry entry;
@@ -50,7 +67,7 @@ void Rpc::bindAsync(const char* name,
 
     // Create a placeholder invoker (actual invocation handled in handle())
     struct PlaceholderInvoker : public detail::ErasedInvoker {
-        fl::tuple<TypeConversionResult, json> invoke(const json&) override {
+        fl::tuple<TypeConversionResult, json> invoke(const json&) FL_NO_EXCEPT override {
             // Should not be called - handle() will call mResponseAwareFn directly
             return fl::make_tuple(TypeConversionResult::success(), json(nullptr));
         }
@@ -61,20 +78,70 @@ void Rpc::bindAsync(const char* name,
 }
 
 // =============================================================================
+// Rpc::bindStreaming() - Bind streaming method with JsonStreamWriter parameter
+// =============================================================================
+
+void Rpc::bindStreaming(const char* name, fl::StreamingRpcHandler fn) FL_NO_EXCEPT {
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+    fl::string key(name);
+
+    detail::RpcEntry entry;
+    entry.mTypeTag = detail::TypeTag<void(const json&)>::id();
+    entry.mMode = RpcMode::SYNC;
+    entry.mIsStreaming = true;
+    entry.mStreamingFn = fl::move(fn);
+
+    entry.mSchemaGenerator = fl::make_shared<detail::TypedSchemaGenerator<void(const json&)>>();
+    entry.mDescription = "";
+    entry.mTags = {};
+
+    struct PlaceholderInvoker : public detail::ErasedInvoker {
+        fl::tuple<TypeConversionResult, json> invoke(const json&) FL_NO_EXCEPT override {
+            return fl::make_tuple(TypeConversionResult::success(), json(nullptr));
+        }
+    };
+    entry.mInvoker = fl::make_shared<PlaceholderInvoker>();
+
+    mRegistry[key] = fl::move(entry);
+#else
+    (void)name;
+    (void)fn;
+#endif
+}
+
+// =============================================================================
 // Rpc::handle() - Process JSON-RPC requests
 // =============================================================================
 
-json Rpc::handle(const json& request) {
+// Compact error-message constants. Long error strings inflate the
+// per-call-site `fl::string` ctor + concat code on Cortex-M0+ /
+// no-FPU targets where every `.text` byte counts. Large-memory targets
+// keep the descriptive form; Low-memory targets use the short form.
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+#  define FL_RPC_ERR_NO_METHOD       "Invalid Request: missing 'method'"
+#  define FL_RPC_ERR_METHOD_NOT_STR  "Invalid Request: 'method' must be a string"
+#  define FL_RPC_ERR_METHOD_NOT_FOUND_PREFIX "Method not found: "
+#  define FL_RPC_ERR_PARAMS_NOT_ARRAY "Invalid params: must be an array"
+#  define FL_RPC_ERR_INVALID_PARAMS_PREFIX  "Invalid params: "
+#else
+#  define FL_RPC_ERR_NO_METHOD       "method"
+#  define FL_RPC_ERR_METHOD_NOT_STR  "method"
+#  define FL_RPC_ERR_METHOD_NOT_FOUND_PREFIX "404: "
+#  define FL_RPC_ERR_PARAMS_NOT_ARRAY "params"
+#  define FL_RPC_ERR_INVALID_PARAMS_PREFIX  "params: "
+#endif
+
+json Rpc::handle(const json& request) FL_NO_EXCEPT {
     // Extract method name
     if (!request.contains("method")) {
         FL_ERROR("RPC: Invalid Request - missing 'method' field");
-        return detail::makeJsonRpcError(-32600, "Invalid Request: missing 'method'", request["id"]);
+        return detail::makeJsonRpcError(-32600, FL_RPC_ERR_NO_METHOD, request["id"]);
     }
 
     auto methodOpt = request["method"].as_string();
     if (!methodOpt.has_value()) {
         FL_ERROR("RPC: Invalid Request - 'method' must be a string");
-        return detail::makeJsonRpcError(-32600, "Invalid Request: 'method' must be a string", request["id"]);
+        return detail::makeJsonRpcError(-32600, FL_RPC_ERR_METHOD_NOT_STR, request["id"]);
     }
     fl::string methodName = methodOpt.value();
 
@@ -86,6 +153,28 @@ json Rpc::handle(const json& request) {
     // RPC catalog as a known constant -- callers don't introspect at runtime.
     // See FastLED #3081.
     if (methodName == "rpc.discover") {
+        // Stream when possible: the schema tree for a large registry can
+        // exceed the free heap on ESP32-S3 (FastLED #4899). Scheduled calls
+        // (non-zero timestamp) keep the inline result so it is recorded.
+        // Stream sinks run the callback synchronously, so `self` outlives it.
+        const bool scheduled = request.contains("timestamp") &&
+                               request["timestamp"].as_int().value_or(0) != 0;
+        if (!scheduled && mResponseStreamSink &&
+            (!mResponseStreamAvailable || mResponseStreamAvailable())) {
+            fl::json requestId = request.contains("id") ? request["id"] : json(nullptr);
+            const bool includeId = request.contains("id");
+            const Rpc* self = this;
+            mResponseStreamSink([self, requestId, includeId](fl::JsonStreamWriter& writer) {
+                streamJsonRpcResultEnvelope(
+                    writer, requestId, includeId,
+                    [self](fl::JsonStreamWriter& resultWriter) {
+                        self->writeSchema(resultWriter);
+                    });
+            });
+            fl::json skip = fl::json::object();
+            skip.set("noEnqueue", true);
+            return skip;
+        }
         json response = json::object();
         response.set("jsonrpc", "2.0");
         response.set("result", schema());
@@ -100,18 +189,47 @@ json Rpc::handle(const json& request) {
     auto it = mRegistry.find(methodName);
     if (it == mRegistry.end()) {
         FL_WARN("RPC: Method not found: " << methodName.c_str());
-        return detail::makeJsonRpcError(-32601, "Method not found: " + methodName, request["id"]);
+        return detail::makeJsonRpcError(-32601, fl::string(FL_RPC_ERR_METHOD_NOT_FOUND_PREFIX) + methodName, request["id"]);
     }
 
     // Extract params (default to empty array)
     json params = request.contains("params") ? request["params"] : json::parse("[]");
     if (!params.is_array()) {
         FL_ERROR("RPC: Invalid params - must be an array for method: " << methodName.c_str());
-        return detail::makeJsonRpcError(-32602, "Invalid params: must be an array", request["id"]);
+        return detail::makeJsonRpcError(-32602, FL_RPC_ERR_PARAMS_NOT_ARRAY, request["id"]);
     }
 
     // Check if this is an async function
     const detail::RpcEntry& entry = it->second;
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+    if (entry.mIsStreaming) {
+        if (!mResponseStreamSink) {
+            return detail::makeJsonRpcError(-32603, "Streaming response sink not configured", request["id"]);
+        }
+
+        fl::StreamingRpcHandler streamFn = entry.mStreamingFn;
+        fl::json paramsCopy = params;
+        fl::json requestId = request.contains("id") ? request["id"] : json(nullptr);
+        const bool includeId = request.contains("id");
+        mResponseStreamSink([streamFn, paramsCopy, requestId, includeId](fl::JsonStreamWriter& writer) {
+            streamJsonRpcResultEnvelope(
+                writer,
+                requestId,
+                includeId,
+                [streamFn, paramsCopy, requestId](fl::JsonStreamWriter& resultWriter) {
+                    if (streamFn) {
+                        streamFn(resultWriter, paramsCopy, requestId);
+                    } else {
+                        resultWriter.valueNull();
+                    }
+                });
+        });
+
+        fl::json skip = fl::json::object();
+        skip.set("noEnqueue", true);
+        return skip;
+    }
+
     bool isAsync = (entry.mMode == RpcMode::ASYNC || entry.mMode == RpcMode::ASYNC_STREAM);
 
     // Check if this is a response-aware function (uses ResponseSend&)
@@ -130,9 +248,11 @@ json Rpc::handle(const json& request) {
         mResponseSink(ack);
         FL_DBG("RPC: Sent ACK for async method: " << methodName.c_str());
     }
+#endif
 
     fl::tuple<TypeConversionResult, json> resultTuple;
 
+#if FL_PLATFORM_HAS_LARGE_MEMORY
     // Handle response-aware methods (with ResponseSend& parameter)
     if (isResponseAware) {
         // Create ResponseSend instance
@@ -148,6 +268,12 @@ json Rpc::handle(const json& request) {
         // Regular invocation
         resultTuple = entry.mInvoker->invoke(params);
     }
+#else
+    // Low-memory targets only register regular (non-response-aware) sync RPCs;
+    // the bindAsync path is gated out (see #3224 Tier 1B). Drop the
+    // isResponseAware branch entirely to slim Rpc::handle.
+    resultTuple = entry.mInvoker->invoke(params);
+#endif
 
     TypeConversionResult convResult = fl::get<0>(resultTuple);
     json returnVal = fl::get<1>(resultTuple);
@@ -155,7 +281,7 @@ json Rpc::handle(const json& request) {
     // Check for conversion errors
     if (!convResult.ok()) {
         FL_ERROR("RPC: Invalid params for method '" << methodName.c_str() << "': " << convResult.errorMessage().c_str());
-        return detail::makeJsonRpcError(-32602, "Invalid params: " + convResult.errorMessage(), request["id"]);
+        return detail::makeJsonRpcError(-32602, fl::string(FL_RPC_ERR_INVALID_PARAMS_PREFIX) + convResult.errorMessage(), request["id"]);
     }
 
     // Build success response
@@ -168,7 +294,12 @@ json Rpc::handle(const json& request) {
         response.set("id", request["id"]);
     }
 
-    // Include warnings if any
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+    // Include warnings if any. Low-memory targets emit warnings only as
+    // explicit error returns (e.g. our gated `float -> int not supported`
+    // path in #3224 Tier 1A) -- the warnings-array variant emplace + nested
+    // json::array() builder + push_back path was a measurable contributor
+    // to the LowMemory .text mass on its own.
     if (convResult.hasWarning()) {
         json warnings = json::array();
         for (fl::size i = 0; i < convResult.warnings().size(); ++i) {
@@ -177,10 +308,14 @@ json Rpc::handle(const json& request) {
         response.set("warnings", warnings);
     }
 
-    // For async functions, mark response to not queue it (ACK already sent)
+    // For async functions, mark response to signal "ACK already sent" so
+    // downstream queue machinery skips pushing a duplicate response.
+    // Renamed from `__async` in #3228 -- field is a public envelope-control
+    // marker, not a reserved-namespace identifier.
     if (isAsync) {
-        response.set("__async", true);  // Internal marker
+        response.set("ackOnly", true);
     }
+#endif
 
     return response;
 }
@@ -189,7 +324,7 @@ json Rpc::handle(const json& request) {
 // Rpc::handle_maybe() - Process notifications (no id returns nullopt)
 // =============================================================================
 
-fl::optional<json> Rpc::handle_maybe(const json& request) {
+fl::optional<json> Rpc::handle_maybe(const json& request) FL_NO_EXCEPT {
     // If no id, this is a notification - process but don't return response
     if (!request.contains("id")) {
         // Still need to execute the method
@@ -216,7 +351,7 @@ fl::optional<json> Rpc::handle_maybe(const json& request) {
 // Rpc::tags() - Returns list of unique tags
 // =============================================================================
 
-fl::vector<fl::string> Rpc::tags() const {
+fl::vector<fl::string> Rpc::tags() const FL_NO_EXCEPT {
     fl::vector<fl::string> result;
     for (auto it = mRegistry.begin(); it != mRegistry.end(); ++it) {
         for (fl::size i = 0; i < it->second.mTags.size(); ++i) {
@@ -239,7 +374,7 @@ fl::vector<fl::string> Rpc::tags() const {
 // Rpc::methods() - Returns flat method array
 // =============================================================================
 
-json Rpc::methods() const {
+json Rpc::methods() const FL_NO_EXCEPT {
     json arr = json::array();
     for (auto it = mRegistry.begin(); it != mRegistry.end(); ++it) {
         // Format: ["methodName", "returnType", [["param1", "type1"], ["param2", "type2"]], "mode"]
@@ -261,10 +396,28 @@ json Rpc::methods() const {
 // Rpc::schema() - Returns flat schema
 // =============================================================================
 
-json Rpc::schema() const {
+json Rpc::schema() const FL_NO_EXCEPT {
     json doc = json::object();
     doc.set("schema", methods());
     return doc;
 }
+
+#if FL_PLATFORM_HAS_LARGE_MEMORY
+void Rpc::writeSchema(fl::JsonStreamWriter& writer) const FL_NO_EXCEPT {
+    writer.beginObject();
+    writer.key("schema");
+    writer.beginArray();
+    for (auto it = mRegistry.begin(); it != mRegistry.end(); ++it) {
+        writer.beginArray();
+        writer.value(it->first.c_str());
+        writer.value(it->second.mSchemaGenerator->resultTypeName());
+        writer.value(it->second.mSchemaGenerator->params());
+        writer.value((it->second.mMode == RpcMode::ASYNC) ? "async" : "sync");
+        writer.endArray();
+    }
+    writer.endArray();
+    writer.endObject();
+}
+#endif
 
 } // namespace fl

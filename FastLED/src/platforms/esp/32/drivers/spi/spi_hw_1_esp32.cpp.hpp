@@ -16,6 +16,7 @@
 #include "platforms/shared/spi_hw_1.h"
 #include "platforms/shared/spi_manager.h"  // For DMABuffer, TransmitMode, SPIError
 #include "platforms/esp/32/drivers/spi/spi_hw_base.h"  // Common ESP32 SPI definitions
+#include "platforms/esp/32/drivers/spi/spi_provider.hpp"
 #include "fl/stl/cstring.h"
 #include "fl/stl/limits.h"
 #include "fl/stl/noexcept.h"
@@ -37,21 +38,21 @@ namespace fl {
 /// This implementation uses async DMA via spi_device_queue_trans()
 class SPISingleESP32 : public SpiHw1 {
 public:
-    explicit SPISingleESP32(int bus_id = -1, const char* name = "Unknown") FL_NOEXCEPT;
+    explicit SPISingleESP32(int bus_id = -1, const char* name = "Unknown") FL_NO_EXCEPT;
     ~SPISingleESP32();
 
-    bool begin(const SpiHw1::Config& config) FL_NOEXCEPT override;
-    void end() FL_NOEXCEPT override;
-    DMABuffer acquireDMABuffer(size_t bytes_per_lane) FL_NOEXCEPT override;
-    bool transmit(TransmitMode mode = TransmitMode::ASYNC) FL_NOEXCEPT override;
-    bool waitComplete(u32 timeout_ms = fl::numeric_limits<u32>::max()) FL_NOEXCEPT override;
-    bool isBusy() const FL_NOEXCEPT override;
-    bool isInitialized() const FL_NOEXCEPT override;
-    int getBusId() const FL_NOEXCEPT override;
-    const char* getName() const FL_NOEXCEPT override;
+    bool begin(const SpiHw1::Config& config) FL_NO_EXCEPT override;
+    void end() FL_NO_EXCEPT override;
+    DMABuffer acquireDMABuffer(size_t bytes_per_lane) FL_NO_EXCEPT override;
+    bool transmit(TransmitMode mode = TransmitMode::ASYNC) FL_NO_EXCEPT override;
+    bool waitComplete(u32 timeout_ms = fl::numeric_limits<u32>::max()) FL_NO_EXCEPT override;
+    bool isBusy() const FL_NO_EXCEPT override;
+    bool isInitialized() const FL_NO_EXCEPT override;
+    int getBusId() const FL_NO_EXCEPT override;
+    const char* getName() const FL_NO_EXCEPT override;
 
 private:
-    void cleanup() FL_NOEXCEPT;
+    void cleanup() FL_NO_EXCEPT;
 
     int mBusId;
     const char* mName;
@@ -76,7 +77,7 @@ private:
 // SPISingleESP32 Implementation
 // ============================================================================
 
-SPISingleESP32::SPISingleESP32(int bus_id, const char* name) FL_NOEXCEPT
+SPISingleESP32::SPISingleESP32(int bus_id, const char* name) FL_NO_EXCEPT
     : mBusId(bus_id)
     , mName(name)
     , mSPIHandle(nullptr)
@@ -90,9 +91,14 @@ SPISingleESP32::SPISingleESP32(int bus_id, const char* name) FL_NOEXCEPT
 
 SPISingleESP32::~SPISingleESP32() {
     cleanup();
+    if (mTransactionActive) {
+        // The SDK still owns this descriptor and its DMA storage. Destruction
+        // cannot return safely after a failed final wait, even in release builds.
+        __builtin_abort();
+    }
 }
 
-bool SPISingleESP32::begin(const SpiHw1::Config& config) FL_NOEXCEPT {
+bool SPISingleESP32::begin(const SpiHw1::Config& config) FL_NO_EXCEPT {
     if (mInitialized) {
         return true;  // Already initialized
     }
@@ -108,15 +114,16 @@ bool SPISingleESP32::begin(const SpiHw1::Config& config) FL_NOEXCEPT {
     u8 bus_num = (mBusId != -1) ? static_cast<u8>(mBusId) : config.bus_num;
 
     // Convert platform-agnostic bus_num to ESP32 SPI host
-    if (bus_num == 2) {
+    switch (bus_num) {
+    case 2:
         mHost = SPI2_HOST;
-    }
+        break;
 #if SOC_SPI_PERIPH_NUM > 2
-    else if (bus_num == 3) {
+    case 3:
         mHost = SPI3_HOST;
-    }
+        break;
 #endif
-    else {
+    default:
         return false;  // Invalid bus number
     }
 
@@ -171,11 +178,11 @@ bool SPISingleESP32::begin(const SpiHw1::Config& config) FL_NOEXCEPT {
     return true;
 }
 
-void SPISingleESP32::end() FL_NOEXCEPT {
+void SPISingleESP32::end() FL_NO_EXCEPT {
     cleanup();
 }
 
-DMABuffer SPISingleESP32::acquireDMABuffer(size_t bytes_per_lane) FL_NOEXCEPT {
+DMABuffer SPISingleESP32::acquireDMABuffer(size_t bytes_per_lane) FL_NO_EXCEPT {
     if (!mInitialized) {
         return DMABuffer(SPIError::NOT_INITIALIZED);
     }
@@ -198,8 +205,11 @@ DMABuffer SPISingleESP32::acquireDMABuffer(size_t bytes_per_lane) FL_NOEXCEPT {
     }
 
     // Allocate new DMABuffer - it will manage its own memory
+    mBufferAcquired = false;
     mDMABuffer = DMABuffer(total_size);
-    if (!mDMABuffer.ok()) {
+    // The shared buffer object can exist even if its vector storage failed.
+    if (!mDMABuffer.ok() || mDMABuffer.size() != total_size) {
+        mDMABuffer.reset();
         return DMABuffer(SPIError::ALLOCATION_FAILED);
     }
 
@@ -209,8 +219,8 @@ DMABuffer SPISingleESP32::acquireDMABuffer(size_t bytes_per_lane) FL_NOEXCEPT {
     return mDMABuffer;
 }
 
-bool SPISingleESP32::transmit(TransmitMode mode) FL_NOEXCEPT {
-    if (!mInitialized || !mBufferAcquired) {
+bool SPISingleESP32::transmit(TransmitMode mode) FL_NO_EXCEPT {
+    if (!mInitialized || !mBufferAcquired || mTransactionActive) {
         return false;
     }
 
@@ -239,7 +249,7 @@ bool SPISingleESP32::transmit(TransmitMode mode) FL_NOEXCEPT {
     return true;
 }
 
-bool SPISingleESP32::waitComplete(u32 timeout_ms) FL_NOEXCEPT {
+bool SPISingleESP32::waitComplete(u32 timeout_ms) FL_NO_EXCEPT {
     if (!mTransactionActive) {
         return true;  // Nothing to wait for
     }
@@ -248,8 +258,13 @@ bool SPISingleESP32::waitComplete(u32 timeout_ms) FL_NOEXCEPT {
     esp_err_t ret = spi_device_get_trans_result(
         mSPIHandle,
         &result,
-        pdMS_TO_TICKS(timeout_ms)
+        timeout_ms == (fl::numeric_limits<u32>::max)()
+            ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms)
     );
+
+    // A timeout does not return ownership of the queued transaction or its
+    // storage. Keep both alive so a later wait/poll can reap the real result.
+    if (ret != ESP_OK) return false;
 
     mTransactionActive = false;
 
@@ -260,27 +275,30 @@ bool SPISingleESP32::waitComplete(u32 timeout_ms) FL_NOEXCEPT {
     return (ret == ESP_OK);
 }
 
-bool SPISingleESP32::isBusy() const FL_NOEXCEPT {
-    return mTransactionActive;
+bool SPISingleESP32::isBusy() const FL_NO_EXCEPT {
+    // Complete a timed-out wait when the SDK result arrives. Otherwise the
+    // channel manager could poll BUSY forever after an ordinary timeout.
+    return mTransactionActive &&
+           !const_cast<SPISingleESP32*>(this)->waitComplete(0);
 }
 
-bool SPISingleESP32::isInitialized() const FL_NOEXCEPT {
+bool SPISingleESP32::isInitialized() const FL_NO_EXCEPT {
     return mInitialized;
 }
 
-int SPISingleESP32::getBusId() const FL_NOEXCEPT {
+int SPISingleESP32::getBusId() const FL_NO_EXCEPT {
     return mBusId;
 }
 
-const char* SPISingleESP32::getName() const FL_NOEXCEPT {
+const char* SPISingleESP32::getName() const FL_NO_EXCEPT {
     return mName;
 }
 
-void SPISingleESP32::cleanup() FL_NOEXCEPT {
+void SPISingleESP32::cleanup() FL_NO_EXCEPT {
     if (mInitialized) {
         // Wait for any pending transmission
         if (mTransactionActive) {
-            waitComplete();
+            if (!waitComplete()) return;
         }
 
         // Release DMA buffer
@@ -308,17 +326,21 @@ void SPISingleESP32::cleanup() FL_NOEXCEPT {
 // Singleton getters for controller instances (Meyer's Singleton pattern)
 // These are called from the centralized registration in spi_esp32_init.cpp
 // Return as SpiHw1 base class pointer to avoid forward declaration issues
-fl::shared_ptr<SpiHw1>& getController2() FL_NOEXCEPT {
-    static fl::shared_ptr<SpiHw1> instance = fl::make_shared<SPISingleESP32>(2, "SPI2");
-    return instance;
-}
-
+namespace platforms {
+namespace detail {
+fl::shared_ptr<SpiHw1> makeNativeSpiHw1(u8 bus) FL_NO_EXCEPT {
+    if (bus == 2) {
+        return fl::make_shared<SPISingleESP32>(2, "SPI2");
+    }
 #if SOC_SPI_PERIPH_NUM > 2
-fl::shared_ptr<SpiHw1>& getController3() FL_NOEXCEPT {
-    static fl::shared_ptr<SpiHw1> instance = fl::make_shared<SPISingleESP32>(3, "SPI3");
-    return instance;
-}
+    if (bus == 3) {
+        return fl::make_shared<SPISingleESP32>(3, "SPI3");
+    }
 #endif
+    return {};
+}
+} // namespace detail
+} // namespace platforms
 
 }  // namespace fl
 

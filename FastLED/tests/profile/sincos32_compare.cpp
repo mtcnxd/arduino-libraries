@@ -1,11 +1,12 @@
 // Performance comparison: sincos32 (scalar) vs sincos32_simd (SIMD)
 // ok standalone
+#include "fl/stl/compiler_control.h"  // FL_NO_INLINE
 #include "FastLED.h"
 #include "fl/stl/align.h"
 #include "fl/stl/int.h"
 #include "fl/stl/json.h"
 #include "fl/math/simd.h"
-#include "fl/math/sin32.h"
+#include "fl/math/sin32_simd.h"
 #include "fl/stl/cstring.h"
 #include "fl/stl/stdio.h"
 #include "profile_result.h"
@@ -21,7 +22,7 @@ volatile u32 g_angle_offset = 0;
 volatile i32 g_accumulator = 0;
 
 // Benchmark scalar sincos32 (1 angle per call)
-__attribute__((noinline))
+FL_NO_INLINE
 void benchmark_sincos32_scalar(int calls) {
     // Pre-generate test angles (16 different angles to prevent pattern optimization)
     u32 test_angles[16];
@@ -51,7 +52,7 @@ void benchmark_sincos32_scalar(int calls) {
 }
 
 // Benchmark SIMD sincos32_simd (4 angles per call)
-__attribute__((noinline))
+FL_NO_INLINE
 void benchmark_sincos32_simd(int calls) {
     // Pre-generate test angle sets (16 different sets)
     FL_ALIGNAS(16) u32 angle_sets[16][4];

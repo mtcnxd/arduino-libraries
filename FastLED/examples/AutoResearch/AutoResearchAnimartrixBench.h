@@ -17,16 +17,29 @@
 #pragma once
 
 #include <FastLED.h>
+#include "fl/stl/chrono.h"
 #include "fl/fx/2d/animartrix_detail/perlin_float.h"
 #include "fl/fx/2d/animartrix_detail/perlin_i16_optimized.h"
 #include "fl/math/fixed_point/s16x16.h"
+#include "fl/stl/singleton.h"
 
 namespace autoresearch {
 namespace animartrix_check {
 
 // Volatile sink to defeat dead-code elimination on both the float and
 // the i16 outputs. Same trick the SIMD multiply benchmark uses.
-static volatile int32_t g_animartrix_bench_sink;
+struct PerlinBenchState {
+    volatile int32_t sink;
+    int32_t fade_lut[257];
+
+    PerlinBenchState() : sink(0) {
+        fl::perlin_i16_optimized::init_fade_lut(fade_lut);
+    }
+};
+
+inline PerlinBenchState& perlinBenchState() {
+    return fl::SingletonShared<PerlinBenchState>::instance();
+}
 
 struct PerlinBenchResult {
     int64_t iterations;
@@ -50,12 +63,8 @@ inline PerlinBenchResult runPerlinBenchmark(int iters) {
     // static-in-header rule stays happy and C++11's thread-safe init
     // guarantees a single initialization across calls. The float path
     // has no equivalent setup.
-    struct FadeLut {
-        int32_t table[257];
-        FadeLut() { fl::perlin_i16_optimized::init_fade_lut(table); }
-    };
-    static const FadeLut fade_lut_holder;  // C++11 magic statics
-    const int32_t* fade_lut = fade_lut_holder.table;
+    PerlinBenchState& state = perlinBenchState();
+    const int32_t* fade_lut = state.fade_lut;
 
     constexpr int GRID = 16;          // 16x16 pixel pass per iteration
     constexpr float STEP_F = 0.05f;   // Animartrix-typical pixel step in noise space
@@ -66,7 +75,7 @@ inline PerlinBenchResult runPerlinBenchmark(int iters) {
     {
         float ax = 0.0f, ay = 0.0f;
         int32_t sink = 0;
-        uint32_t t0 = micros();
+        uint32_t t0 = fl::micros();
         for (int it = 0; it < iters; it++) {
             // Slowly drift the origin across the iter so the compiler
             // can't pre-compute. Same pattern Animartrix uses (the
@@ -84,8 +93,8 @@ inline PerlinBenchResult runPerlinBenchmark(int iters) {
                 }
             }
         }
-        uint32_t t1 = micros();
-        g_animartrix_bench_sink = sink;
+        uint32_t t1 = fl::micros();
+        state.sink = sink;
         r.pnoise_float_us = static_cast<int64_t>(t1 - t0);
     }
 
@@ -96,7 +105,7 @@ inline PerlinBenchResult runPerlinBenchmark(int iters) {
         constexpr int32_t DRIFT_X = static_cast<int32_t>(0.011f * 65536.0f);
         constexpr int32_t DRIFT_Y = static_cast<int32_t>(0.013f * 65536.0f);
         int32_t sink = 0;
-        uint32_t t0 = micros();
+        uint32_t t0 = fl::micros();
         for (int it = 0; it < iters; it++) {
             ax_i += DRIFT_X;
             ay_i += DRIFT_Y;
@@ -114,8 +123,8 @@ inline PerlinBenchResult runPerlinBenchmark(int iters) {
                 }
             }
         }
-        uint32_t t1 = micros();
-        g_animartrix_bench_sink = sink;
+        uint32_t t1 = fl::micros();
+        state.sink = sink;
         r.pnoise_i16_us = static_cast<int64_t>(t1 - t0);
     }
 

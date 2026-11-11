@@ -19,6 +19,7 @@
 ///
 /// **Tier 2** — not implemented; tracked in #2731.
 
+#include "fl/stl/noexcept.h"
 #include "fl/wdt/watchdog.h"
 #include "platforms/esp/32/watchdog_esp32.h"
 
@@ -58,23 +59,23 @@ struct Esp32WatchdogState {
     ResetCause cached_cause = ResetCause::UNKNOWN;
     bool       cause_cached = false;
 
-    fl::u16 load_crash_count() const {
+    fl::u16 load_crash_count() const FL_NO_EXCEPT {
         // Little-endian read from the tail of persist[].
         return static_cast<fl::u16>(persist[kUserBytes])
              | (static_cast<fl::u16>(persist[kUserBytes + 1]) << 8);
     }
-    void store_crash_count(fl::u16 v) {
+    void store_crash_count(fl::u16 v) FL_NO_EXCEPT {
         persist[kUserBytes]     = static_cast<fl::u8>(v & 0xFF);
         persist[kUserBytes + 1] = static_cast<fl::u8>((v >> 8) & 0xFF);
     }
 };
 
-inline Esp32WatchdogState& esp32WatchdogState() {
+inline Esp32WatchdogState& esp32WatchdogState() FL_NO_EXCEPT {
     static Esp32WatchdogState s{};  // okay static in header — this `.impl.hpp` is included from exactly one TU (the dispatcher)
     return s;
 }
 
-inline ResetCause translateEsp32ResetReason(esp_reset_reason_t r) {
+inline ResetCause translateEsp32ResetReason(esp_reset_reason_t r) FL_NO_EXCEPT {
     switch (r) {
         case ESP_RST_POWERON:  return ResetCause::POWER_ON;
         case ESP_RST_EXT:      return ResetCause::EXTERNAL_PIN;
@@ -90,11 +91,11 @@ inline ResetCause translateEsp32ResetReason(esp_reset_reason_t r) {
     }
 }
 
-inline TaskHandle_t esp32MonitoredTask() {
+inline TaskHandle_t esp32MonitoredTask() FL_NO_EXCEPT {
     return static_cast<TaskHandle_t>(esp32WatchdogState().monitored_task);
 }
 
-inline bool esp32SubscribeCurrentTask() {
+inline bool esp32SubscribeCurrentTask() FL_NO_EXCEPT {
     if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
         return false;
     }
@@ -139,7 +140,7 @@ inline bool esp32SubscribeCurrentTask() {
     return true;
 }
 
-inline void esp32ResetMonitoredTask() {
+inline void esp32ResetMonitoredTask() FL_NO_EXCEPT {
     auto& s = esp32WatchdogState();
     if (!s.armed || s.monitored_task == nullptr) {
         return;
@@ -153,7 +154,7 @@ inline void esp32ResetMonitoredTask() {
     (void)esp_task_wdt_reset();
 }
 
-inline bool esp32UnsubscribeMonitoredTask() {
+inline bool esp32UnsubscribeMonitoredTask() FL_NO_EXCEPT {
     auto& s = esp32WatchdogState();
     if (s.monitored_task != nullptr && s.monitored_task_added) {
         esp_err_t err = esp_task_wdt_delete(esp32MonitoredTask());
@@ -172,12 +173,12 @@ inline bool esp32UnsubscribeMonitoredTask() {
 // the noop) so the function-local static lives in exactly one TU per program.
 // Avoids the Teensy 3.x `__cxa_guard` ABI conflict that a header-side
 // definition would impose on every TU including FastLED.h.
-Watchdog& Watchdog::instance() FL_NOEXCEPT {
+Watchdog& Watchdog::instance() FL_NO_EXCEPT {
     static Watchdog sInstance;
     return sInstance;
 }
 
-void Watchdog::begin(fl::u32 timeout_ms) FL_NOEXCEPT {
+void Watchdog::begin(fl::u32 timeout_ms) FL_NO_EXCEPT {
     if (timeout_ms == 0) timeout_ms = 1000;
     if (timeout_ms > FL_WATCHDOG_MAX_TIMEOUT_MS) timeout_ms = FL_WATCHDOG_MAX_TIMEOUT_MS;
     auto& s = platforms::esp32WatchdogState();
@@ -187,11 +188,11 @@ void Watchdog::begin(fl::u32 timeout_ms) FL_NOEXCEPT {
     s.armed = true;
 }
 
-void Watchdog::feed() FL_NOEXCEPT {
+void Watchdog::feed() FL_NO_EXCEPT {
     platforms::esp32ResetMonitoredTask();
 }
 
-void Watchdog::disable() FL_NOEXCEPT {
+void Watchdog::disable() FL_NO_EXCEPT {
     // Real TWDT teardown via `fl::watchdog_disable()` (wraps
     // `esp_task_wdt_deinit()` and is safely guarded against being called
     // before the FreeRTOS scheduler is running). Only clear the local armed
@@ -208,7 +209,7 @@ void Watchdog::disable() FL_NOEXCEPT {
     }
 }
 
-ResetCause Watchdog::lastResetCause() const FL_NOEXCEPT {
+ResetCause Watchdog::lastResetCause() const FL_NO_EXCEPT {
     auto& s = platforms::esp32WatchdogState();
     if (!s.cause_cached) {
         s.cached_cause = platforms::translateEsp32ResetReason(esp_reset_reason());
@@ -222,45 +223,45 @@ ResetCause Watchdog::lastResetCause() const FL_NOEXCEPT {
     return s.cached_cause;
 }
 
-bool Watchdog::lastResetWasWatchdog() const FL_NOEXCEPT {
+bool Watchdog::lastResetWasWatchdog() const FL_NO_EXCEPT {
     return lastResetCause() == ResetCause::WATCHDOG;
 }
 
-fl::u8 Watchdog::persistRead(fl::size idx) const FL_NOEXCEPT {
+fl::u8 Watchdog::persistRead(fl::size idx) const FL_NO_EXCEPT {
     // User-visible persist region is the leading kUserBytes; the trailing
     // bytes hold the serialized crash_count and are NOT exposed.
     if (idx >= platforms::Esp32WatchdogState::kUserBytes) return 0;
     return platforms::esp32WatchdogState().persist[idx];
 }
 
-void Watchdog::persistWrite(fl::size idx, fl::u8 v) FL_NOEXCEPT {
+void Watchdog::persistWrite(fl::size idx, fl::u8 v) FL_NO_EXCEPT {
     if (idx >= platforms::Esp32WatchdogState::kUserBytes) return;
     platforms::esp32WatchdogState().persist[idx] = v;
 }
 
-fl::u16 Watchdog::consecutiveCrashCount() const FL_NOEXCEPT {
+fl::u16 Watchdog::consecutiveCrashCount() const FL_NO_EXCEPT {
     // Side-effect: ensure cached_cause has bumped the counter at least once
     (void)lastResetCause();
     return platforms::esp32WatchdogState().load_crash_count();
 }
 
-void Watchdog::markCleanShutdown() FL_NOEXCEPT {
+void Watchdog::markCleanShutdown() FL_NO_EXCEPT {
     platforms::esp32WatchdogState().store_crash_count(0);
 }
 
-bool Watchdog::isInSafeMode() const FL_NOEXCEPT {
+bool Watchdog::isInSafeMode() const FL_NO_EXCEPT {
     return consecutiveCrashCount() >= mSafeModeThreshold;
 }
 
-fl::u16 Watchdog::safeModeThreshold() const FL_NOEXCEPT { return mSafeModeThreshold; }
-void    Watchdog::setSafeModeThreshold(fl::u16 t) FL_NOEXCEPT { mSafeModeThreshold = t; }
+fl::u16 Watchdog::safeModeThreshold() const FL_NO_EXCEPT { return mSafeModeThreshold; }
+void    Watchdog::setSafeModeThreshold(fl::u16 t) FL_NO_EXCEPT { mSafeModeThreshold = t; }
 
-FL_NORETURN void Watchdog::reboot() FL_NOEXCEPT {
+FL_NO_RETURN void Watchdog::reboot() FL_NO_EXCEPT {
     esp_restart();
     while (true) {}
 }
 
-bool Watchdog::onTimeout(WatchdogTimeoutCallback cb, void* user_data) FL_NOEXCEPT {
+bool Watchdog::onTimeout(WatchdogTimeoutCallback cb, void* user_data) FL_NO_EXCEPT {
     // Tier 1 hookup: re-init the watchdog with a callback bound. Reuse the
     // timeout that begin() armed earlier — registering a callback must not
     // silently shorten the watchdog window. If begin() hasn't been called,
@@ -274,25 +275,25 @@ bool Watchdog::onTimeout(WatchdogTimeoutCallback cb, void* user_data) FL_NOEXCEP
     return true;
 }
 
-bool Watchdog::onTimeout(fl::function<void()> /*cb*/) FL_NOEXCEPT {
+bool Watchdog::onTimeout(fl::function<void()> /*cb*/) FL_NO_EXCEPT {
     // fl::function trampoline requires allocator-safe storage; deferred to
     // a follow-up PR. Tier 1 C-pointer path above remains usable.
     return false;
 }
 
-bool Watchdog::setPauseOnDebug(bool /*pause*/) FL_NOEXCEPT { return false; }
-bool Watchdog::writeCrashLog(fl::span<const fl::u8> /*payload*/) FL_NOEXCEPT { return false; }
-fl::size Watchdog::readCrashLog(fl::span<fl::u8> /*out*/) const FL_NOEXCEPT { return 0; }
-bool Watchdog::rebootIntoBootloader() FL_NOEXCEPT { return false; }
+bool Watchdog::setPauseOnDebug(bool /*pause*/) FL_NO_EXCEPT { return false; }
+bool Watchdog::writeCrashLog(fl::span<const fl::u8> /*payload*/) FL_NO_EXCEPT { return false; }
+fl::size Watchdog::readCrashLog(fl::span<fl::u8> /*out*/) const FL_NO_EXCEPT { return 0; }
+bool Watchdog::rebootIntoBootloader() FL_NO_EXCEPT { return false; }
 
-bool                Watchdog::setWindow(fl::u32, fl::u32) FL_NOEXCEPT { return false; }
-bool                Watchdog::hasCrashReport() const FL_NOEXCEPT { return false; }
-WatchdogCrashReport Watchdog::readCrashReport() const FL_NOEXCEPT {
+bool                Watchdog::setWindow(fl::u32, fl::u32) FL_NO_EXCEPT { return false; }
+bool                Watchdog::hasCrashReport() const FL_NO_EXCEPT { return false; }
+WatchdogCrashReport Watchdog::readCrashReport() const FL_NO_EXCEPT {
     WatchdogCrashReport r{};
     r.valid = false;
     r.fault_type = "";
     return r;
 }
-void                Watchdog::clearCrashReport() FL_NOEXCEPT {}
+void                Watchdog::clearCrashReport() FL_NO_EXCEPT {}
 
 } // namespace fl

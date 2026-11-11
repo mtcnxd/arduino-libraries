@@ -6,6 +6,7 @@
 #include "fl/system/fastpin_base.h"
 #include "fl/system/pin.h"  // For PinMode, PinValue enums
 #include "fl/stl/compiler_control.h"
+#include "fl/stl/noexcept.h"
 
 FL_DISABLE_WARNING_PUSH
 FL_DISABLE_WARNING_DEPRECATED_REGISTER
@@ -24,31 +25,37 @@ public:
     typedef volatile u32 * port_ptr_t;
     typedef u32 port_t;
 
-    inline static void setOutput() { pinMode(PIN, PinMode::Output); }
-    inline static void setInput() { pinMode(PIN, PinMode::Input); }
+    /// GPIO number this logical pin resolves to. Pin-order modes remap the
+    /// template pin numbers, so drivers that need the real pad (for example
+    /// the HSPI peripheral, which is hard-wired to GPIO13/14) must consult
+    /// this rather than the template argument.
+    static constexpr u8 kRealPin = PIN;
 
-    inline static void hi() __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPOS = MASK; } else { GP16O = 1; } }
-    inline static void lo() __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPOC = MASK; } else { GP16O = 0; } }
-    inline static void set(FASTLED_REGISTER port_t val) __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPO = val; } else { GP16O = val; }}
+    inline static void setOutput() FL_NO_EXCEPT { pinMode(PIN, PinMode::Output); }
+    inline static void setInput() FL_NO_EXCEPT { pinMode(PIN, PinMode::Input); }
 
-    inline static void strobe() __attribute__ ((always_inline)) { toggle(); toggle(); }
+    inline static void hi() FL_NO_EXCEPT __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPOS = MASK; } else { GP16O = 1; } }
+    inline static void lo() FL_NO_EXCEPT __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPOC = MASK; } else { GP16O = 0; } }
+    inline static void set(FASTLED_REGISTER port_t val) FL_NO_EXCEPT __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPO = val; } else { GP16O = val; }}
 
-    inline static void toggle() __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPO ^= MASK; } else { GP16O ^= MASK; } }
+    inline static void strobe() FL_NO_EXCEPT __attribute__ ((always_inline)) { toggle(); toggle(); }
 
-    inline static void hi(FASTLED_REGISTER port_ptr_t port) __attribute__ ((always_inline)) { hi(); }
-    inline static void lo(FASTLED_REGISTER port_ptr_t port) __attribute__ ((always_inline)) { lo(); }
-    inline static void fastset(FASTLED_REGISTER port_ptr_t port, FASTLED_REGISTER port_t val) __attribute__ ((always_inline)) { *port = val; }
+    inline static void toggle() FL_NO_EXCEPT __attribute__ ((always_inline)) { if(PIN < 16) { _GPB._GPO ^= MASK; } else { GP16O ^= MASK; } }
 
-    inline static port_t hival() __attribute__ ((always_inline)) { if (PIN<16) { return GPO | MASK;  } else { return GP16O | MASK; } }
-    inline static port_t loval() __attribute__ ((always_inline)) { if (PIN<16) { return GPO & ~MASK; } else { return GP16O & ~MASK; } }
-    inline static port_ptr_t port() __attribute__ ((always_inline)) { if(PIN<16) { return &_GPB._GPO; } else { return &GP16O; } }
-    inline static port_ptr_t sport() __attribute__ ((always_inline)) { return &_GPB._GPOS; } // there is no GP160 support for this
-    inline static port_ptr_t cport() __attribute__ ((always_inline)) { return &_GPB._GPOC; }
-    inline static port_t mask() __attribute__ ((always_inline)) { return MASK; }
+    inline static void hi(FASTLED_REGISTER port_ptr_t port) FL_NO_EXCEPT __attribute__ ((always_inline)) { hi(); }
+    inline static void lo(FASTLED_REGISTER port_ptr_t port) FL_NO_EXCEPT __attribute__ ((always_inline)) { lo(); }
+    inline static void fastset(FASTLED_REGISTER port_ptr_t port, FASTLED_REGISTER port_t val) FL_NO_EXCEPT __attribute__ ((always_inline)) { *port = val; }
 
-    inline static bool isset() __attribute__ ((always_inline)) { return (PIN < 16) ? (GPO & MASK) : (GP16O & MASK); }
+    inline static port_t hival() FL_NO_EXCEPT __attribute__ ((always_inline)) { if (PIN<16) { return GPO | MASK;  } else { return GP16O | MASK; } }
+    inline static port_t loval() FL_NO_EXCEPT __attribute__ ((always_inline)) { if (PIN<16) { return GPO & ~MASK; } else { return GP16O & ~MASK; } }
+    inline static port_ptr_t port() FL_NO_EXCEPT __attribute__ ((always_inline)) { if(PIN<16) { return &_GPB._GPO; } else { return &GP16O; } }
+    inline static port_ptr_t sport() FL_NO_EXCEPT __attribute__ ((always_inline)) { return &_GPB._GPOS; } // there is no GP160 support for this
+    inline static port_ptr_t cport() FL_NO_EXCEPT __attribute__ ((always_inline)) { return &_GPB._GPOC; }
+    inline static port_t mask() FL_NO_EXCEPT __attribute__ ((always_inline)) { return MASK; }
 
-    inline static constexpr bool validpin() { return true; }
+    inline static bool isset() FL_NO_EXCEPT __attribute__ ((always_inline)) { return (PIN < 16) ? (GPO & MASK) : (GP16O & MASK); }
+
+    inline static constexpr bool validpin() FL_NO_EXCEPT { return true; }
 };
 
 // Forward declaration of FastPin template
@@ -68,6 +75,17 @@ _FL_DEFPIN(4,4); _FL_DEFPIN(5,5);
 
 _FL_DEFPIN(12,12); _FL_DEFPIN(13,13); _FL_DEFPIN(14,14); _FL_DEFPIN(15,15);
 _FL_DEFPIN(16,16);
+
+// Keep example defaults off UART0, boot-strapping pins, and flash GPIOs.
+#ifndef FL_PIN_CLOCKLESS_1
+#define FL_PIN_CLOCKLESS_1 4
+#endif
+#ifndef FL_PIN_SPI_DATA_1
+#define FL_PIN_SPI_DATA_1 13
+#endif
+#ifndef FL_PIN_SPI_CLOCK_1
+#define FL_PIN_SPI_CLOCK_1 14
+#endif
 
 #define PORTA_FIRST_PIN 12
 #elif defined(FASTLED_ESP8266_D1_PIN_ORDER)
@@ -89,6 +107,17 @@ _FL_DEFPIN(13,14);
 _FL_DEFPIN(14,4);
 _FL_DEFPIN(15,5);
 
+// D2 is GPIO4; D7/D5 are the established hardware SPI MOSI/SCK pins.
+#ifndef FL_PIN_CLOCKLESS_1
+#define FL_PIN_CLOCKLESS_1 4
+#endif
+#ifndef FL_PIN_SPI_DATA_1
+#define FL_PIN_SPI_DATA_1 7
+#endif
+#ifndef FL_PIN_SPI_CLOCK_1
+#define FL_PIN_SPI_CLOCK_1 5
+#endif
+
 #define PORTA_FIRST_PIN 12
 
 #else // if defined(FASTLED_ESP8266_NODEMCU_PIN_ORDER)
@@ -98,6 +127,17 @@ _FL_DEFPIN(15,5);
 _FL_DEFPIN(0,16); _FL_DEFPIN(1,5); _FL_DEFPIN(2,4); _FL_DEFPIN(3,0);
 _FL_DEFPIN(4,2); _FL_DEFPIN(5,14); _FL_DEFPIN(6,12); _FL_DEFPIN(7,13);
 _FL_DEFPIN(8,15); _FL_DEFPIN(9,3); _FL_DEFPIN(10,1);
+
+// D2 is GPIO4; D7/D5 are the established hardware SPI MOSI/SCK pins.
+#ifndef FL_PIN_CLOCKLESS_1
+#define FL_PIN_CLOCKLESS_1 2
+#endif
+#ifndef FL_PIN_SPI_DATA_1
+#define FL_PIN_SPI_DATA_1 7
+#endif
+#ifndef FL_PIN_SPI_CLOCK_1
+#define FL_PIN_SPI_CLOCK_1 5
+#endif
 
 #define PORTA_FIRST_PIN 6
 

@@ -13,6 +13,7 @@
 ///   - Host / stub      → `platforms/stub/watchdog_stub.impl.hpp` (thread timer)
 ///   - WASM             → `platforms/wasm/watchdog_wasm.impl.hpp` (routes to noop)
 ///   - ESP32 family     → `platforms/esp/32/watchdog_esp32.impl.hpp` (wraps fl::watchdog_setup)
+///   - ESP8266          → `platforms/esp/8266/watchdog_esp8266.impl.hpp` (os_timer + RTC mem)
 ///   - Teensy 4 (T4.x)  → `platforms/arm/mxrt1062/watchdog_mxrt1062.impl.hpp` (WDT_T4<WDT3>)
 ///   - Teensy 3 (T3.x)  → `platforms/arm/k20/watchdog_k20.impl.hpp` (direct WDOG regs)
 ///   - RP2040 / RP2350  → `platforms/arm/rp/watchdog_rp.impl.hpp` (Pico SDK)
@@ -46,6 +47,8 @@
     #include "platforms/stub/watchdog_stub.impl.hpp"
 #elif defined(FL_IS_ESP32)
     #include "platforms/esp/32/watchdog_esp32.impl.hpp"
+#elif defined(FL_IS_ESP8266)
+    #include "platforms/esp/8266/watchdog_esp8266.impl.hpp"
 #elif defined(FL_IS_TEENSY_4X) && FL_HAS_INCLUDE(<imxrt.h>)
     #include "platforms/arm/mxrt1062/watchdog_mxrt1062.impl.hpp"
 #elif (defined(FL_IS_TEENSY_3X) || defined(FL_IS_TEENSY_LC)) && FL_HAS_INCLUDE(<kinetis.h>)
@@ -64,7 +67,12 @@
     #include "platforms/arm/mgm240/watchdog_mgm240.impl.hpp"
 #elif defined(FL_IS_AVR) && FL_HAS_INCLUDE(<avr/wdt.h>)
     #include "platforms/avr/watchdog_avr.impl.hpp"
-#elif defined(FL_IS_ARM_LPC)
+#elif defined(FL_IS_ARM_LPC_845) || defined(FL_IS_ARM_LPC_804)
+    // Only the chips whose vendor CMSIS PAL ships in ArduinoCore-LPC8xx
+    // (<LPC845.h> / <LPC804.h>). LPC11xx / LPC15xx have different SYSCON
+    // layouts and no in-tree PAL — they take the no-op fallback below
+    // (the previous hand-rolled impl poked LPC84x register addresses on
+    // them, which was silently wrong).
     #include "platforms/arm/lpc/watchdog_lpc.impl.hpp"
 #else
     // Fallback: no real or emulated WDT available — all methods are no-ops.
@@ -79,3 +87,10 @@
 // `src/fl/wdt/_build.cpp.hpp` — included from the regular fl/ unity build,
 // not from here. Including `.cpp.hpp` files outside the unity build is a
 // hard ban per agents/docs/cpp-standards.md.
+
+// Boot-guard counter storage (fl/wdt/boot_guard.h): platforms that keep it in
+// reset-persistent memory define FL_WATCHDOG_HAS_BOOT_GUARD_STORAGE and
+// supply it in their impl; everywhere else the counter is always 0.
+#if !defined(FL_WATCHDOG_HAS_BOOT_GUARD_STORAGE)
+    #include "platforms/shared/watchdog_boot_guard_noop.hpp"
+#endif

@@ -75,7 +75,7 @@
 #define FL_DATA_RATE_KHZ(X) (((48000000L / 1000L) / X))
 #define FL_TO_CLOCK_DIVIDER(FREQ_MHZ, CPU_FREQ_MHZ) ((CPU_FREQ_MHZ) / (FREQ_MHZ))
 
-#elif defined(FASTLED_TEENSY4) || defined(ESP32) || (defined(ESP8266) && defined(FASTLED_ALL_PINS_HARDWARE_SPI)) || defined(FASTLED_STUB_IMPL)
+#elif defined(FASTLED_TEENSY4) || defined(ESP32) || defined(FASTLED_STUB_IMPL)
 // Hardware SPI platforms: return frequency in Hz
 // ESP32 always uses hardware SPI via GPIO matrix (no conditional needed)
 #define FL_DATA_RATE_MHZ(X) (1000000 * (X))
@@ -84,10 +84,10 @@
 
 #else
 // Software SPI platforms: return clock divider (CPU cycles per bit)
-// Use GET_CPU_FREQUENCY() for compile-time constant, avoiding issues with
+// Use FL_CPU_FREQUENCY() for compile-time constant, avoiding issues with
 // STM32duino where F_CPU may be defined as runtime SystemCoreClock variable
-#define FL_DATA_RATE_MHZ(X) ((GET_CPU_FREQUENCY() / 1000000L) / X)
-#define FL_DATA_RATE_KHZ(X) ((GET_CPU_FREQUENCY() / 1000L) / X)
+#define FL_DATA_RATE_MHZ(X) ((FL_CPU_FREQUENCY() / 1000000L) / X)
+#define FL_DATA_RATE_KHZ(X) ((FL_CPU_FREQUENCY() / 1000L) / X)
 #define FL_TO_CLOCK_DIVIDER(FREQ_MHZ, CPU_FREQ_MHZ) ((CPU_FREQ_MHZ) / (FREQ_MHZ))
 #endif
 

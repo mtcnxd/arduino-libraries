@@ -1,12 +1,13 @@
 /// @file OTA.ino
-/// @brief Minimal OTA (Over-The-Air) update example for ESP32
-/// @filter: (platform is esp32)
+/// @brief Minimal OTA (Over-The-Air) update example for ESP32 and ESP8266
+/// @filter: ((platform is esp32) or (platform is esp8266))
 ///
-/// This example demonstrates the FastLED OTA functionality for ESP32 devices.
-/// It provides both Arduino IDE OTA and web-based firmware updates.
+/// This example demonstrates the FastLED OTA functionality. On ESP32 it offers
+/// Arduino-IDE OTA and a web-based update interface; on ESP8266 it provides
+/// Arduino-IDE OTA (port 3232) via the core's ArduinoOTA (no web server).
 ///
 ///
-/// PLATFORMIO REQUIREMENTS:
+/// PROJECT REQUIREMENTS:
 /// Add these lines to your platformio.ini:
 ///
 /// [env:esp32]
@@ -79,10 +80,8 @@
 ///    - Reduce LED count or brightness during OTA to lower current draw
 ///
 /// 7. ESP32-C3 compilation fails with "assembler not found"
-///    - PlatformIO RISC-V toolchain corruption (not OTA code issue)
-///    - Fix: pio system prune && pio pkg install --platform espressif32
-///    - Alternative: Delete ~/.platformio/packages/toolchain-riscv32-esp
-///    - See: https://github.com/platformio/platform-espressif32/issues/1224
+///    - RISC-V toolchain cache corruption (not OTA code issue)
+///    - Fix: `fbuild purge` and rebuild so the toolchain is fetched again
 ///
 /// 8. Performance: LED animations stutter or slow
 ///    - poll() overhead is <0.5% at 60 FPS (~73µs per call)

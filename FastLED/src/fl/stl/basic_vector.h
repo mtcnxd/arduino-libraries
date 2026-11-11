@@ -21,14 +21,11 @@ namespace fl {
 struct vector_element_ops {
     void (*copy_construct)(void* dst, const void* src);
     void (*move_construct)(void* dst, void* src);
-    void (*destroy)(void* ptr);
     void (*default_construct)(void* ptr);
     void (*swap_elements)(void* a, void* b);
 
-    /// Move-construct count elements from src to dst (non-overlapping, dst uninitialized).
-    void (*uninitialized_move_n)(void* dst, void* src, fl::size count);
-
-    /// Destroy count elements starting at first.
+    /// Destroy count elements starting at first (count == 1 for a single
+    /// element: one destroy thunk per type instead of two, #4794).
     void (*destroy_n)(void* first, fl::size count);
 };
 
@@ -39,56 +36,56 @@ struct vector_element_ops {
 class vector_basic {
   public:
     // ======= CAPACITY =======
-    fl::size size() const FL_NOEXCEPT { return mSize; }
-    bool empty() const FL_NOEXCEPT { return mSize == 0; }
-    fl::size capacity() const FL_NOEXCEPT { return mCapacity; }
-    bool full() const FL_NOEXCEPT { return mSize >= mCapacity; }
-    fl::size element_size() const FL_NOEXCEPT { return mElementSize; }
+    fl::size size() const FL_NO_EXCEPT { return mSize; }
+    bool empty() const FL_NO_EXCEPT { return mSize == 0; }
+    fl::size capacity() const FL_NO_EXCEPT { return mCapacity; }
+    bool full() const FL_NO_EXCEPT { return mSize >= mCapacity; }
+    fl::size element_size() const FL_NO_EXCEPT { return mElementSize; }
 
     // ======= RAW DATA ACCESS =======
-    void* data_raw() FL_NOEXCEPT { return mArray; }
-    const void* data_raw() const FL_NOEXCEPT { return mArray; }
+    void* data_raw() FL_NO_EXCEPT { return mArray; }
+    const void* data_raw() const FL_NO_EXCEPT { return mArray; }
 
     // ======= MEMORY MANAGEMENT =======
-    void reserve_impl(fl::size n) FL_NOEXCEPT;
-    void shrink_to_fit_impl() FL_NOEXCEPT;
+    void reserve_impl(fl::size n) FL_NO_EXCEPT;
+    void shrink_to_fit_impl() FL_NO_EXCEPT;
 
     // ======= ELEMENT OPERATIONS =======
-    void push_back_copy_impl(const void* element) FL_NOEXCEPT;
-    void push_back_move_impl(void* element) FL_NOEXCEPT;
-    void pop_back_impl() FL_NOEXCEPT;
-    void clear_impl() FL_NOEXCEPT;
+    void push_back_copy_impl(const void* element) FL_NO_EXCEPT;
+    void push_back_move_impl(void* element) FL_NO_EXCEPT;
+    void pop_back_impl() FL_NO_EXCEPT;
+    void clear_impl() FL_NO_EXCEPT;
 
     /// Erase element at index. Shifts subsequent elements left.
-    void erase_impl(fl::size index) FL_NOEXCEPT;
+    void erase_impl(fl::size index) FL_NO_EXCEPT;
 
     /// Erase range [first_index, first_index + count).
-    void erase_range_impl(fl::size first_index, fl::size count) FL_NOEXCEPT;
+    void erase_range_impl(fl::size first_index, fl::size count) FL_NO_EXCEPT;
 
     /// Insert element at index by copy. Shifts subsequent elements right.
-    void insert_copy_impl(fl::size index, const void* element) FL_NOEXCEPT;
+    void insert_copy_impl(fl::size index, const void* element) FL_NO_EXCEPT;
 
     /// Insert element at index by move. Shifts subsequent elements right.
-    void insert_move_impl(fl::size index, void* element) FL_NOEXCEPT;
+    void insert_move_impl(fl::size index, void* element) FL_NO_EXCEPT;
 
     /// Resize to n elements. New elements are default-constructed (zeroed for trivial).
-    void resize_impl(fl::size n) FL_NOEXCEPT;
+    void resize_impl(fl::size n) FL_NO_EXCEPT;
 
     /// Resize to n elements. New elements are copy-constructed from value.
-    void resize_value_impl(fl::size n, const void* value) FL_NOEXCEPT;
+    void resize_value_impl(fl::size n, const void* value) FL_NO_EXCEPT;
 
     /// Swap contents with another vector_basic.
-    void swap_impl(vector_basic& other) FL_NOEXCEPT;
+    void swap_impl(vector_basic& other) FL_NO_EXCEPT;
 
     // ======= DESTRUCTOR =======
-    ~vector_basic() FL_NOEXCEPT;
+    ~vector_basic() FL_NO_EXCEPT;
 
   protected:
     // ======= CONSTRUCTION (only callable by vector<T>) =======
 
     /// Heap-only vector (no inline buffer).
     vector_basic(fl::size elementSize, memory_resource* resource,
-                 const vector_element_ops* ops) FL_NOEXCEPT
+                 const vector_element_ops* ops) FL_NO_EXCEPT
         : mElementSize(elementSize)
         , mResource(resource)
         , mOps(ops)
@@ -99,7 +96,7 @@ class vector_basic {
     vector_basic(void* inlineBuffer, fl::size inlineCapacity,
                  fl::size elementSize, memory_resource* resource,
                  const vector_element_ops* ops)
- FL_NOEXCEPT : mElementSize(elementSize)
+ FL_NO_EXCEPT : mElementSize(elementSize)
         , mResource(resource)
         , mOps(ops)
         , mInlineOffset(static_cast<fl::size>(
@@ -112,21 +109,21 @@ class vector_basic {
     }
 
     // Deleted copy/move — vector<T> handles these
-    vector_basic(const vector_basic&) FL_NOEXCEPT = delete;
-    vector_basic(vector_basic&&) FL_NOEXCEPT = delete;
-    vector_basic& operator=(const vector_basic&) FL_NOEXCEPT = delete;
-    vector_basic& operator=(vector_basic&&) FL_NOEXCEPT = delete;
+    vector_basic(const vector_basic&) FL_NO_EXCEPT = delete;
+    vector_basic(vector_basic&&) FL_NO_EXCEPT = delete;
+    vector_basic& operator=(const vector_basic&) FL_NO_EXCEPT = delete;
+    vector_basic& operator=(vector_basic&&) FL_NO_EXCEPT = delete;
 
     // ======= HELPERS FOR DERIVED CLASSES =======
 
     /// Copy all elements from another vector_basic.
-    void copy_from(const vector_basic& other) FL_NOEXCEPT;
+    void copy_from(const vector_basic& other) FL_NO_EXCEPT;
 
     /// Move-steal contents from another vector_basic.
-    void move_from(vector_basic& other) FL_NOEXCEPT;
+    void move_from(vector_basic& other) FL_NO_EXCEPT;
 
     /// Move-assign from another vector_basic (clears this first).
-    void move_assign(vector_basic& other) FL_NOEXCEPT;
+    void move_assign(vector_basic& other) FL_NO_EXCEPT;
 
     // ======= DATA MEMBERS =======
     void* mArray = nullptr;
@@ -146,43 +143,44 @@ class vector_basic {
     // ======= HELPER METHODS =======
 
     /// Compute inline buffer pointer from offset.
-    void* inlineBufferPtr() FL_NOEXCEPT {
+    void* inlineBufferPtr() FL_NO_EXCEPT {
         return static_cast<char*>(static_cast<void*>(this)) + mInlineOffset;
     }
-    const void* inlineBufferPtr() const FL_NOEXCEPT {
+    const void* inlineBufferPtr() const FL_NO_EXCEPT {
         return static_cast<const char*>(static_cast<const void*>(this)) + mInlineOffset;
     }
 
     /// Is data currently in the inline buffer?
-    bool isInline() const FL_NOEXCEPT {
+    bool isInline() const FL_NO_EXCEPT {
         return mInlineCapacity > 0 && mArray == inlineBufferPtr();
     }
 
     /// Does this vector have an inline buffer at all?
-    bool hasInlineBuffer() const FL_NOEXCEPT {
+    bool hasInlineBuffer() const FL_NO_EXCEPT {
         return mInlineCapacity > 0;
     }
 
     /// Pointer to element at index (byte arithmetic).
-    void* element_ptr(fl::size index) FL_NOEXCEPT {
+    void* element_ptr(fl::size index) FL_NO_EXCEPT {
         return static_cast<char*>(mArray) + index * mElementSize;
     }
-    const void* element_ptr(fl::size index) const FL_NOEXCEPT {
+    const void* element_ptr(fl::size index) const FL_NO_EXCEPT {
         return static_cast<const char*>(mArray) + index * mElementSize;
     }
 
   private:
     /// Ensure capacity for at least n elements. Grows if needed.
-    void ensure_capacity(fl::size n) FL_NOEXCEPT;
+    void ensure_capacity(fl::size n) FL_NO_EXCEPT;
 
     /// Grow to new_capacity. Moves existing elements.
-    void grow_to(fl::size new_capacity) FL_NOEXCEPT;
+    void grow_to(fl::size new_capacity) FL_NO_EXCEPT;
+    void uninitialized_move_n_impl(void* dst, void* src, fl::size count) const FL_NO_EXCEPT;
 
     // ======= TRIVIAL ELEMENT HELPERS (memcpy/memmove) =======
-    void trivial_copy(void* dst, const void* src, fl::size count) const FL_NOEXCEPT;
-    void trivial_move_left(void* dst, const void* src, fl::size count) const FL_NOEXCEPT;
-    void trivial_default_construct(void* ptr, fl::size count) const FL_NOEXCEPT;
-    void trivial_swap(void* a, void* b) const FL_NOEXCEPT;
+    void trivial_copy(void* dst, const void* src, fl::size count) const FL_NO_EXCEPT;
+    void trivial_move_left(void* dst, const void* src, fl::size count) const FL_NO_EXCEPT;
+    void trivial_default_construct(void* ptr, fl::size count) const FL_NO_EXCEPT;
+    void trivial_swap(void* a, void* b) const FL_NO_EXCEPT;
 };
 
 // ======= OPS TABLE HELPERS =======
@@ -205,31 +203,39 @@ struct has_copy_ctor<T, decltype(void(T(fl::declval<const T&>())))> : fl::true_t
 
 // Default construct: available when T has default ctor
 template <typename T>
-typename fl::enable_if<has_default_ctor<T>::value, void(*)(void*) FL_NOEXCEPT>::type
-get_default_construct_fn() FL_NOEXCEPT {
-    return [](void* ptr) FL_NOEXCEPT { new (ptr) T(); };
+void vector_default_construct(void* ptr) FL_NO_EXCEPT {
+    new (ptr) T();
+}
+
+template <typename T>
+constexpr typename fl::enable_if<has_default_ctor<T>::value, void(*)(void*)>::type
+get_default_construct_fn() FL_NO_EXCEPT {
+    return &vector_default_construct<T>;
 }
 
 // Default construct: nullptr when T has no default ctor
 template <typename T>
-typename fl::enable_if<!has_default_ctor<T>::value, void(*)(void*) FL_NOEXCEPT>::type
-get_default_construct_fn() FL_NOEXCEPT {
+constexpr typename fl::enable_if<!has_default_ctor<T>::value, void(*)(void*)>::type
+get_default_construct_fn() FL_NO_EXCEPT {
     return nullptr;
 }
 
 // Copy construct: available when T has copy ctor
 template <typename T>
-typename fl::enable_if<has_copy_ctor<T>::value, void(*)(void*, const void*) FL_NOEXCEPT>::type
-get_copy_construct_fn() FL_NOEXCEPT {
-    return [](void* dst, const void* src) FL_NOEXCEPT {
-        new (dst) T(*static_cast<const T*>(src));
-    };
+void vector_copy_construct(void* dst, const void* src) FL_NO_EXCEPT {
+    new (dst) T(*static_cast<const T*>(src));
+}
+
+template <typename T>
+constexpr typename fl::enable_if<has_copy_ctor<T>::value, void(*)(void*, const void*)>::type
+get_copy_construct_fn() FL_NO_EXCEPT {
+    return &vector_copy_construct<T>;
 }
 
 // Copy construct: nullptr when T is not copyable
 template <typename T>
-typename fl::enable_if<!has_copy_ctor<T>::value, void(*)(void*, const void*) FL_NOEXCEPT>::type
-get_copy_construct_fn() FL_NOEXCEPT {
+constexpr typename fl::enable_if<!has_copy_ctor<T>::value, void(*)(void*, const void*)>::type
+get_copy_construct_fn() FL_NO_EXCEPT {
     return nullptr;
 }
 
@@ -251,55 +257,50 @@ struct is_swappable<T, decltype(void(
 
 // Move construct: available
 template <typename T>
-typename fl::enable_if<has_move_ctor<T>::value, void(*)(void*, void*) FL_NOEXCEPT>::type
-get_move_construct_fn() FL_NOEXCEPT {
-    return [](void* dst, void* src) FL_NOEXCEPT {
-        new (dst) T(static_cast<T&&>(*static_cast<T*>(src)));
-    };
+void vector_move_construct(void* dst, void* src) FL_NO_EXCEPT {
+    new (dst) T(static_cast<T&&>(*static_cast<T*>(src)));
 }
 
 template <typename T>
-typename fl::enable_if<!has_move_ctor<T>::value, void(*)(void*, void*) FL_NOEXCEPT>::type
-get_move_construct_fn() FL_NOEXCEPT {
+constexpr typename fl::enable_if<has_move_ctor<T>::value, void(*)(void*, void*)>::type
+get_move_construct_fn() FL_NO_EXCEPT {
+    return &vector_move_construct<T>;
+}
+
+template <typename T>
+constexpr typename fl::enable_if<!has_move_ctor<T>::value, void(*)(void*, void*)>::type
+get_move_construct_fn() FL_NO_EXCEPT {
     return nullptr;
 }
 
 // Swap: available when swappable
 template <typename T>
-typename fl::enable_if<is_swappable<T>::value, void(*)(void*, void*) FL_NOEXCEPT>::type
-get_swap_fn() FL_NOEXCEPT {
-    return [](void* a, void* b) FL_NOEXCEPT {
-        T& ta = *static_cast<T*>(a);
-        T& tb = *static_cast<T*>(b);
-        T tmp(static_cast<T&&>(ta));
-        ta = static_cast<T&&>(tb);
-        tb = static_cast<T&&>(tmp);
-    };
+void vector_swap_elements(void* a, void* b) FL_NO_EXCEPT {
+    T& ta = *static_cast<T*>(a);
+    T& tb = *static_cast<T*>(b);
+    T tmp(static_cast<T&&>(ta));
+    ta = static_cast<T&&>(tb);
+    tb = static_cast<T&&>(tmp);
 }
 
 template <typename T>
-typename fl::enable_if<!is_swappable<T>::value, void(*)(void*, void*) FL_NOEXCEPT>::type
-get_swap_fn() FL_NOEXCEPT {
+constexpr typename fl::enable_if<is_swappable<T>::value, void(*)(void*, void*)>::type
+get_swap_fn() FL_NO_EXCEPT {
+    return &vector_swap_elements<T>;
+}
+
+template <typename T>
+constexpr typename fl::enable_if<!is_swappable<T>::value, void(*)(void*, void*)>::type
+get_swap_fn() FL_NO_EXCEPT {
     return nullptr;
 }
 
-// Uninitialized move N: available when move-constructible
 template <typename T>
-typename fl::enable_if<has_move_ctor<T>::value, void(*)(void*, void*, fl::size) FL_NOEXCEPT>::type
-get_uninitialized_move_n_fn() FL_NOEXCEPT {
-    return [](void* dst, void* src, fl::size count) FL_NOEXCEPT {
-        T* d = static_cast<T*>(dst);
-        T* s = static_cast<T*>(src);
-        for (fl::size i = 0; i < count; ++i) {
-            new (&d[i]) T(static_cast<T&&>(s[i]));
-        }
-    };
-}
-
-template <typename T>
-typename fl::enable_if<!has_move_ctor<T>::value, void(*)(void*, void*, fl::size) FL_NOEXCEPT>::type
-get_uninitialized_move_n_fn() FL_NOEXCEPT {
-    return nullptr;
+void vector_destroy_n(void* first, fl::size count) FL_NO_EXCEPT {
+    T* p = static_cast<T*>(first);
+    for (fl::size i = 0; i < count; ++i) {
+        p[i].~T();
+    }
 }
 
 } // namespace detail
@@ -309,26 +310,18 @@ get_uninitialized_move_n_fn() FL_NOEXCEPT {
 /// Generate a static ops table for type T.
 /// Returns nullptr for trivially copyable types (fast path).
 template <typename T>
-const vector_element_ops* vector_element_ops_for() FL_NOEXCEPT {
+const vector_element_ops* vector_element_ops_for() FL_NO_EXCEPT {
     // Trivially copyable types use the fast path (mOps == nullptr)
     if (fl::is_trivially_copyable<T>::value) {
         return nullptr;
     }
 
-    static const vector_element_ops ops = {
+    static constexpr vector_element_ops ops = {
         detail::get_copy_construct_fn<T>(),       // copy_construct
         detail::get_move_construct_fn<T>(),       // move_construct
-        [](void* ptr) { static_cast<T*>(ptr)->~T(); }, // destroy
         detail::get_default_construct_fn<T>(),    // default_construct
         detail::get_swap_fn<T>(),                 // swap_elements
-        detail::get_uninitialized_move_n_fn<T>(), // uninitialized_move_n
-        // destroy_n
-        [](void* first, fl::size count) FL_NOEXCEPT {
-            T* p = static_cast<T*>(first);
-            for (fl::size i = 0; i < count; ++i) {
-                p[i].~T();
-            }
-        }
+        &detail::vector_destroy_n<T>              // destroy_n
     };
     return &ops;
 }

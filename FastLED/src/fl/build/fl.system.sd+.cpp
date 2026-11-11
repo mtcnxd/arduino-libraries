@@ -1,18 +1,10 @@
 /// @file fl.system.sd+.cpp
-/// @brief Unity build entry-point for SD-card support, split out of
-/// `fl.system+.cpp` so the linker can drop the entire SD chain
-/// (`libSD.a`, `libFS.a`, Arduino's `VFSImpl`, ~16 KB on ESP32-S3)
-/// when the user never calls `FileSystem::beginSd()`.
+/// @brief Tombstone: intentionally empty. Do not delete.
 ///
-/// Replaces the earlier `FASTLED_USE_SDCARD` macro-gate (#2778 v1) —
-/// no user opt-in required.
-///
-/// See FastLED #2773 item 1.2 and `fl/system/sd/file_system_sd.cpp.hpp`.
-
-#include "platforms/new.h"
-
-// IWYU pragma: begin_keep
-#include "fl/system/arduino.h"
-// IWYU pragma: end_keep
-
-#include "fl/system/sd/_build.cpp.hpp"
+/// FastLED 3.10.4-3.10.5 shipped the SD unity unit under this name. 3.10.6
+/// renamed it to `fl.fs.sd+.cpp`. A library unpacked over an older copy
+/// (Arduino IDE "Add .ZIP Library", a manual copy) keeps the stale file,
+/// and Arduino compiles every `.cpp` under `src/`, so both units defined
+/// `fl::FileSystem::beginSd(int)` and the link failed (FastLED #4704).
+/// Shipping this empty file under the old name overwrites the stale copy.
+/// `ci/check_released_sources.py` enforces the pattern at release time.

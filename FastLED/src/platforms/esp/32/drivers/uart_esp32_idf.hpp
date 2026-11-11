@@ -7,16 +7,48 @@
 
 #include "platforms/esp/32/drivers/uart_esp32.h"
 #include "fl/stl/assert.h"
+#include "fl/stl/compiler_control.h"
 #include "fl/stl/singleton.h"
 #include "fl/stl/noexcept.h"
+#include "fl/stl/has_include.h"
 #include "platforms/esp/esp_version.h"
+
+// Arduino's C UART HAL owns an additional mutex used by Serial.begin().
+// Older cores assume that mutex already exists when replacing an SDK driver.
+#if FL_HAS_INCLUDE("esp32-hal-uart.h") && FL_HAS_INCLUDE("esp_arduino_version.h")
+#include "esp_arduino_version.h"
+#if ESP_ARDUINO_VERSION_MAJOR == 2 && ESP_ARDUINO_VERSION < ESP_ARDUINO_VERSION_VAL(2, 0, 17)
+#include <esp32-hal-uart.h> // IWYU pragma: keep
+#define FL_CONSOLE_NEEDS_ARDUINO_UART_BOOTSTRAP 1
+// Address-only weak references do not extract HardwareSerial from an archive.
+// These are the SDK's actual global object types, never a guessed class ABI.
+class HardwareSerial;
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+extern HardwareSerial Serial0 FL_LINK_WEAK;
+#define FL_CONSOLE_ARDUINO_UART0_OBJECT Serial0
+#else
+extern HardwareSerial Serial FL_LINK_WEAK;
+#define FL_CONSOLE_ARDUINO_UART0_OBJECT Serial
+#endif
+#else
+#define FL_CONSOLE_NEEDS_ARDUINO_UART_BOOTSTRAP 0
+#endif
+#else
+#define FL_CONSOLE_NEEDS_ARDUINO_UART_BOOTSTRAP 0
+#endif
 
 // ESP-IDF headers (only in .cpp.hpp, not in .h)
 FL_EXTERN_C_BEGIN
 // IWYU pragma: begin_keep
 #include "driver/uart.h"
 // IWYU pragma: end_keep
+#if ESP_IDF_VERSION_4_OR_HIGHER
 #include "esp_rom_uart.h"
+#else
+// IWYU pragma: begin_keep
+#include "rom/uart.h"
+// IWYU pragma: end_keep
+#endif
 // IWYU pragma: begin_keep
 #include "freertos/FreeRTOS.h"  // For vTaskDelay
 // IWYU pragma: end_keep
@@ -27,8 +59,16 @@ FL_EXTERN_C_END
 
 // Compatibility: esp_rom_output_tx_one_char was added in ESP-IDF 5.3.
 // Older IDF versions only have esp_rom_uart_tx_one_char.
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 3, 0)
+#if !ESP_IDF_VERSION_4_OR_HIGHER
+#define esp_rom_output_tx_one_char(c) uart_tx_one_char(c)
+#define esp_rom_output_tx_wait_idle(n) uart_tx_wait_idle(n)
+#define UART_SIGNAL_TXD_INV UART_INVERSE_TXD
+#define UART_SIGNAL_RXD_INV UART_INVERSE_RXD
+#define UART_SIGNAL_RTS_INV UART_INVERSE_RTS
+#define UART_SIGNAL_CTS_INV UART_INVERSE_CTS
+#elif ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 3, 0)
 #define esp_rom_output_tx_one_char(c) esp_rom_uart_tx_one_char(c)
+#define esp_rom_output_tx_wait_idle(n) esp_rom_uart_tx_wait_idle(n)
 #endif
 
 namespace fl {
@@ -37,11 +77,11 @@ namespace fl {
 // Helper: Convert fl enum classes to ESP-IDF types
 // ============================================================================
 
-static uart_port_t convertPort(UartPort port) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_port_t convertPort(UartPort port) FL_NO_EXCEPT {
     return static_cast<uart_port_t>(static_cast<u8>(port));
 }
 
-static uart_word_length_t convertDataBits(UartDataBits bits) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_word_length_t convertDataBits(UartDataBits bits) FL_NO_EXCEPT {
     switch (bits) {
         case UartDataBits::BITS_5: return UART_DATA_5_BITS;
         case UartDataBits::BITS_6: return UART_DATA_6_BITS;
@@ -51,7 +91,7 @@ static uart_word_length_t convertDataBits(UartDataBits bits) FL_NOEXCEPT {
     }
 }
 
-static uart_parity_t convertParity(UartParity parity) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_parity_t convertParity(UartParity parity) FL_NO_EXCEPT {
     switch (parity) {
         case UartParity::NONE: return UART_PARITY_DISABLE;
         case UartParity::ODD:  return UART_PARITY_ODD;
@@ -60,7 +100,7 @@ static uart_parity_t convertParity(UartParity parity) FL_NOEXCEPT {
     }
 }
 
-static uart_stop_bits_t convertStopBits(UartStopBits bits) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_stop_bits_t convertStopBits(UartStopBits bits) FL_NO_EXCEPT {
     switch (bits) {
         case UartStopBits::BITS_1:   return UART_STOP_BITS_1;
         case UartStopBits::BITS_1_5: return UART_STOP_BITS_1_5;
@@ -69,7 +109,7 @@ static uart_stop_bits_t convertStopBits(UartStopBits bits) FL_NOEXCEPT {
     }
 }
 
-static uart_hw_flowcontrol_t convertFlowControl(UartFlowControl ctrl) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_hw_flowcontrol_t convertFlowControl(UartFlowControl ctrl) FL_NO_EXCEPT {
     switch (ctrl) {
         case UartFlowControl::NONE:    return UART_HW_FLOWCTRL_DISABLE;
         case UartFlowControl::RTS:     return UART_HW_FLOWCTRL_RTS;
@@ -79,7 +119,7 @@ static uart_hw_flowcontrol_t convertFlowControl(UartFlowControl ctrl) FL_NOEXCEP
     }
 }
 
-static int convertIntrFlags(UartIntrPriority priority, UartIntrFlags flags) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE int convertIntrFlags(UartIntrPriority priority, UartIntrFlags flags) FL_NO_EXCEPT {
     int esp_flags = 0;
 
     // Add priority level (LEVEL1-5)
@@ -109,13 +149,13 @@ static int convertIntrFlags(UartIntrPriority priority, UartIntrFlags flags) FL_N
 // - IDF 5.0+: UART_SCLK_DEFAULT exists on all variants (maps to chip's preferred clock)
 // - IDF 4.x: UART_SCLK_APB is the universal clock source
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-static uart_sclk_t convertClockSource(UartClockSource) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_sclk_t convertClockSource(UartClockSource) FL_NO_EXCEPT {
     // UART_SCLK_DEFAULT is the portable choice on IDF 5.x — it resolves to
     // the chip's preferred clock (APB on ESP32/S3/C3, PLL_F80M on C6, etc.)
     return UART_SCLK_DEFAULT;
 }
 #elif ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
-static uart_sclk_t convertClockSource(UartClockSource) FL_NOEXCEPT {
+static FASTLED_FORCE_INLINE uart_sclk_t convertClockSource(UartClockSource) FL_NO_EXCEPT {
     return UART_SCLK_APB;
 }
 #endif
@@ -136,11 +176,11 @@ namespace {
  */
 class UartManager {
 public:
-    static UartManager& instance() FL_NOEXCEPT {
+    static UartManager& instance() FL_NO_EXCEPT {
         return fl::Singleton<UartManager>::instance();
     }
 
-    bool allocateUart(UartPort port) FL_NOEXCEPT {
+    bool allocateUart(UartPort port) FL_NO_EXCEPT {
         int index = static_cast<int>(port);
         FL_ASSERT(index >= 0 && index < 3, "Invalid UART port");
         FL_ASSERT(!mAllocated[index], "UART port already allocated");
@@ -149,14 +189,14 @@ public:
         return true;
     }
 
-    void deallocateUart(UartPort port) FL_NOEXCEPT {
+    void deallocateUart(UartPort port) FL_NO_EXCEPT {
         int index = static_cast<int>(port);
         if (index >= 0 && index < 3) {
             mAllocated[index] = false;
         }
     }
 
-    bool isAllocated(UartPort port) const FL_NOEXCEPT {
+    bool isAllocated(UartPort port) const FL_NO_EXCEPT {
         int index = static_cast<int>(port);
         if (index < 0 || index >= 3) {
             return false;
@@ -177,12 +217,120 @@ private:
 // UartEsp32 Implementation
 // ============================================================================
 
-UartEsp32::UartEsp32(const UartConfig& config) FL_NOEXCEPT
-    : mConfig(config)
-    , mPortInt(static_cast<int>(convertPort(config.port)))
-    , mBuffered(false)
-    , mEventQueue(nullptr) {
+FASTLED_FORCE_INLINE bool UartEsp32::initDriver(const UartConfig& config) FL_NO_EXCEPT {
+    uart_port_t port = static_cast<uart_port_t>(mPortInt);
 
+    // ROBUST DRIVER DETECTION:
+    // Use uart_get_buffered_data_len() as the definitive test for driver installation.
+    // This is more reliable than uart_write_bytes(port, "", 0) which can succeed even
+    // without a driver installed (0-byte write is a no-op).
+    size_t buffered_len = 0;
+    esp_err_t check_err = uart_get_buffered_data_len(port, &buffered_len);
+
+    if (check_err == ESP_OK) {
+        // Driver is installed and working - use it
+        mBuffered = true;
+        return true;  // Success: driver is installed and functional
+    }
+
+    // Driver not installed - install it ourselves
+
+    // Configure UART parameters from UartConfig
+    uart_config_t uart_config = {};
+    uart_config.baud_rate = static_cast<int>(config.baudRate);
+    uart_config.data_bits = convertDataBits(config.dataBits);
+    uart_config.parity = convertParity(config.parity);
+    uart_config.stop_bits = convertStopBits(config.stopBits);
+    uart_config.flow_ctrl = convertFlowControl(config.flowControl);
+    uart_config.rx_flow_ctrl_thresh = static_cast<u8>(config.rxFlowControlThresh);
+
+    // Set clock source (version-dependent field)
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
+    uart_config.source_clk = convertClockSource(config.clockSource);
+#endif
+    // IDF 3.x: source_clk field doesn't exist - skip it
+
+    esp_err_t err = uart_param_config(port, &uart_config);
+    if (err != ESP_OK) {
+        return false;  // Failed - mBuffered remains false, will use ROM UART
+    }
+
+    // Configure pins if specified
+    if (config.pins.txPin >= 0 || config.pins.rxPin >= 0 ||
+        config.pins.rtsPin >= 0 || config.pins.ctsPin >= 0) {
+        err = uart_set_pin(
+            port,
+            config.pins.txPin,   // TX pin
+            config.pins.rxPin,   // RX pin
+            config.pins.rtsPin,  // RTS pin
+            config.pins.ctsPin   // CTS pin
+        );
+        if (err != ESP_OK) {
+            return false;  // Pin configuration failed
+        }
+    }
+
+    // Configure signal inversion if requested
+    if (config.signalInvert.txInvert || config.signalInvert.rxInvert ||
+        config.signalInvert.rtsInvert || config.signalInvert.ctsInvert) {
+        u32 inv_mask = 0;
+        if (config.signalInvert.txInvert)  inv_mask |= UART_SIGNAL_TXD_INV;
+        if (config.signalInvert.rxInvert)  inv_mask |= UART_SIGNAL_RXD_INV;
+        if (config.signalInvert.rtsInvert) inv_mask |= UART_SIGNAL_RTS_INV;
+        if (config.signalInvert.ctsInvert) inv_mask |= UART_SIGNAL_CTS_INV;
+
+        err = uart_set_line_inverse(port, inv_mask);
+        if (err != ESP_OK) {
+            return false;  // Signal inversion failed
+        }
+    }
+
+    // Convert interrupt priority + flags to ESP-IDF format
+    int intr_alloc_flags = convertIntrFlags(config.intrPriority, config.intrFlags);
+
+    // Install driver with TX and RX buffers from config
+    // Event queue: 0 = polling mode (we use uart_read_bytes directly)
+    //             >0 = event-driven mode (ISR posts uart_event_t to queue)
+    // Interrupt flags: Controls ISR priority and IRAM placement
+    //   ESP_INTR_FLAG_IRAM (0x400) = ISR runs from IRAM (survives flash cache disable)
+    //   ESP_INTR_FLAG_LEVEL1-5 = ISR priority level
+    void** queue_handle_ptr = config.eventQueueSize > 0 ? &mEventQueue : nullptr;
+
+    err = uart_driver_install(
+        port,
+        static_cast<int>(config.rxBufferSize),      // RX buffer size
+        static_cast<int>(config.txBufferSize),      // TX buffer size
+        static_cast<int>(config.eventQueueSize),    // Event queue size (0 = no queue)
+        (QueueHandle_t*)queue_handle_ptr,            // Event queue handle
+        intr_alloc_flags                             // ISR priority + flags
+    );
+
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        // ESP_ERR_INVALID_STATE means already installed - OK
+        mBuffered = true;
+
+        // CRITICAL FIX: Add delay after driver installation
+        // ESP-IDF UART driver requires a delay after installation before transmitting
+        // Without this, uart_write_bytes() will succeed but data won't transmit
+        // Reference: https://esp32.com/viewtopic.php?t=2319
+        vTaskDelay(100 / portTICK_PERIOD_MS);  // 100ms delay
+
+        // Configure RS485 mode if enabled
+        if (config.rs485Config.enabled) {
+            // Note: RS485 mode configuration varies by ESP-IDF version
+            // For now, we assume RTS pin is already configured above
+            // and ESP-IDF will handle RS485 mode automatically if RTS is set
+            // Future: Add explicit uart_set_mode(UART_MODE_RS485_HALF_DUPLEX) if available
+        }
+
+        return true;
+    }
+
+    // Installation failed - will fall back to ROM UART
+    return false;
+}
+
+FASTLED_FORCE_INLINE void UartEsp32::initialize(const UartConfig& config) FL_NO_EXCEPT {
     // Check allocation status
     UartManager& manager = UartManager::instance();
     FL_ASSERT(!manager.isAllocated(config.port),
@@ -192,7 +340,40 @@ UartEsp32::UartEsp32(const UartConfig& config) FL_NOEXCEPT
     manager.allocateUart(config.port);
 
     // Initialize driver
-    initDriver();
+    initDriver(config);
+}
+
+UartEsp32::UartEsp32() FL_NO_EXCEPT
+    : mConfig(UartConfig::minimal(UartPort::UART0))
+    , mPortInt(static_cast<fl::i32>(convertPort(UartPort::UART0)))
+    , mBuffered(false)
+    , mEventQueue(nullptr) {
+    // Console traffic must not consume the level-3 interrupt reserved for
+    // timing-sensitive peripherals such as RMT. Match the SDK UART default.
+    const UartConfig config = UartConfig::minimal(UartPort::UART0);
+#if FL_CONSOLE_NEEDS_ARDUINO_UART_BOOTSTRAP
+    if (&::FL_CONSOLE_ARDUINO_UART0_OBJECT && !uart_is_driver_installed(UART_NUM_0)) {
+        // Bootstrap through the C HAL so a later Arduino Serial.begin() can
+        // replace this driver safely. Adopt existing owners without changing
+        // their pins, baud or buffer configuration. No HardwareSerial ABI.
+        // HAL packs parity in bits 0-1, data width in 2-3 and stop bits in 4-5.
+        constexpr u32 format8N1 = static_cast<u32>(UART_PARITY_DISABLE) |
+            (static_cast<u32>(UART_DATA_8_BITS) << 2) |
+            (static_cast<u32>(UART_STOP_BITS_1) << 4);
+        (void)uartBegin(0, config.baudRate, format8N1, -1, -1,
+            config.rxBufferSize, config.txBufferSize, false, 120);
+    }
+#endif
+    initialize(config);
+}
+
+UartEsp32::UartEsp32(const UartConfig& config) FL_NO_EXCEPT
+    : mConfig(config)
+    , mPortInt(static_cast<int>(convertPort(config.port)))
+    , mBuffered(false)
+    , mEventQueue(nullptr) {
+
+    initialize(mConfig);
 }
 
 UartEsp32::~UartEsp32() {
@@ -203,7 +384,7 @@ UartEsp32::~UartEsp32() {
     }
 }
 
-UartEsp32::UartEsp32(UartEsp32&& other) FL_NOEXCEPT
+UartEsp32::UartEsp32(UartEsp32&& other) FL_NO_EXCEPT
     : mConfig(other.mConfig)
     , mPortInt(other.mPortInt)
     , mBuffered(other.mBuffered)
@@ -213,7 +394,7 @@ UartEsp32::UartEsp32(UartEsp32&& other) FL_NOEXCEPT
     other.mEventQueue = nullptr;
 }
 
-UartEsp32& UartEsp32::operator=(UartEsp32&& other) FL_NOEXCEPT {
+UartEsp32& UartEsp32::operator=(UartEsp32&& other) FL_NO_EXCEPT {
     if (this != &other) {
         // Deallocate our current UART
         if (mPortInt >= 0) {
@@ -234,120 +415,20 @@ UartEsp32& UartEsp32::operator=(UartEsp32&& other) FL_NOEXCEPT {
     return *this;
 }
 
-bool UartEsp32::initDriver() FL_NOEXCEPT {
-    uart_port_t port = static_cast<uart_port_t>(mPortInt);
 
-    // ROBUST DRIVER DETECTION:
-    // Use uart_get_buffered_data_len() as the definitive test for driver installation.
-    // This is more reliable than uart_write_bytes(port, "", 0) which can succeed even
-    // without a driver installed (0-byte write is a no-op).
-    size_t buffered_len = 0;
-    esp_err_t check_err = uart_get_buffered_data_len(port, &buffered_len);
-
-    if (check_err == ESP_OK) {
-        // Driver is installed and working - use it
-        mBuffered = true;
-        return true;  // Success: driver is installed and functional
+bool UartEsp32::setBaudRate(u32 baudRate) FL_NO_EXCEPT {
+    if (!mBuffered || baudRate == 0 || baudRate > 0x7fffffffu) {
+        return false;
     }
-
-    // Driver not installed - install it ourselves
-
-    // Configure UART parameters from UartConfig
-    uart_config_t uart_config = {};
-    uart_config.baud_rate = static_cast<int>(mConfig.baudRate);
-    uart_config.data_bits = convertDataBits(mConfig.dataBits);
-    uart_config.parity = convertParity(mConfig.parity);
-    uart_config.stop_bits = convertStopBits(mConfig.stopBits);
-    uart_config.flow_ctrl = convertFlowControl(mConfig.flowControl);
-    uart_config.rx_flow_ctrl_thresh = static_cast<u8>(mConfig.rxFlowControlThresh);
-
-    // Set clock source (version-dependent field)
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
-    uart_config.source_clk = convertClockSource(mConfig.clockSource);
-#endif
-    // IDF 3.x: source_clk field doesn't exist - skip it
-
-    esp_err_t err = uart_param_config(port, &uart_config);
-    if (err != ESP_OK) {
-        return false;  // Failed - mBuffered remains false, will use ROM UART
+    const auto port = static_cast<uart_port_t>(mPortInt);
+    if (uart_set_baudrate(port, baudRate) != ESP_OK) {
+        return false;
     }
-
-    // Configure pins if specified
-    if (mConfig.pins.txPin >= 0 || mConfig.pins.rxPin >= 0 ||
-        mConfig.pins.rtsPin >= 0 || mConfig.pins.ctsPin >= 0) {
-        err = uart_set_pin(
-            port,
-            mConfig.pins.txPin,   // TX pin
-            mConfig.pins.rxPin,   // RX pin
-            mConfig.pins.rtsPin,  // RTS pin
-            mConfig.pins.ctsPin   // CTS pin
-        );
-        if (err != ESP_OK) {
-            return false;  // Pin configuration failed
-        }
-    }
-
-    // Configure signal inversion if requested
-    if (mConfig.signalInvert.txInvert || mConfig.signalInvert.rxInvert ||
-        mConfig.signalInvert.rtsInvert || mConfig.signalInvert.ctsInvert) {
-        u32 inv_mask = 0;
-        if (mConfig.signalInvert.txInvert)  inv_mask |= UART_SIGNAL_TXD_INV;
-        if (mConfig.signalInvert.rxInvert)  inv_mask |= UART_SIGNAL_RXD_INV;
-        if (mConfig.signalInvert.rtsInvert) inv_mask |= UART_SIGNAL_RTS_INV;
-        if (mConfig.signalInvert.ctsInvert) inv_mask |= UART_SIGNAL_CTS_INV;
-
-        err = uart_set_line_inverse(port, inv_mask);
-        if (err != ESP_OK) {
-            return false;  // Signal inversion failed
-        }
-    }
-
-    // Convert interrupt priority + flags to ESP-IDF format
-    int intr_alloc_flags = convertIntrFlags(mConfig.intrPriority, mConfig.intrFlags);
-
-    // Install driver with TX and RX buffers from config
-    // Event queue: 0 = polling mode (we use uart_read_bytes directly)
-    //             >0 = event-driven mode (ISR posts uart_event_t to queue)
-    // Interrupt flags: Controls ISR priority and IRAM placement
-    //   ESP_INTR_FLAG_IRAM (0x400) = ISR runs from IRAM (survives flash cache disable)
-    //   ESP_INTR_FLAG_LEVEL1-5 = ISR priority level
-    void** queue_handle_ptr = mConfig.eventQueueSize > 0 ? &mEventQueue : nullptr;
-
-    err = uart_driver_install(
-        port,
-        static_cast<int>(mConfig.rxBufferSize),      // RX buffer size
-        static_cast<int>(mConfig.txBufferSize),      // TX buffer size
-        static_cast<int>(mConfig.eventQueueSize),    // Event queue size (0 = no queue)
-        (QueueHandle_t*)queue_handle_ptr,            // Event queue handle
-        intr_alloc_flags                             // ISR priority + flags
-    );
-
-    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
-        // ESP_ERR_INVALID_STATE means already installed - OK
-        mBuffered = true;
-
-        // CRITICAL FIX: Add delay after driver installation
-        // ESP-IDF UART driver requires a delay after installation before transmitting
-        // Without this, uart_write_bytes() will succeed but data won't transmit
-        // Reference: https://esp32.com/viewtopic.php?t=2319
-        vTaskDelay(100 / portTICK_PERIOD_MS);  // 100ms delay
-
-        // Configure RS485 mode if enabled
-        if (mConfig.rs485Config.enabled) {
-            // Note: RS485 mode configuration varies by ESP-IDF version
-            // For now, we assume RTS pin is already configured above
-            // and ESP-IDF will handle RS485 mode automatically if RTS is set
-            // Future: Add explicit uart_set_mode(UART_MODE_RS485_HALF_DUPLEX) if available
-        }
-
-        return true;
-    }
-
-    // Installation failed - will fall back to ROM UART
-    return false;
+    mConfig.baudRate = baudRate;
+    return true;
 }
 
-void UartEsp32::write(const char* str) FL_NOEXCEPT {
+void UartEsp32::write(const char* str) FL_NO_EXCEPT {
     if (!str)
         return;
 
@@ -369,7 +450,7 @@ void UartEsp32::write(const char* str) FL_NOEXCEPT {
     }
 }
 
-size_t UartEsp32::write(const u8* buffer, size_t size) FL_NOEXCEPT {
+size_t UartEsp32::write(const u8* buffer, size_t size) FL_NO_EXCEPT {
     if (!buffer || size == 0)
         return 0;
 
@@ -378,18 +459,57 @@ size_t UartEsp32::write(const u8* buffer, size_t size) FL_NOEXCEPT {
     if (mBuffered) {
         // Use uart_write_bytes() - handles raw binary data
         // ESP-IDF UART driver handles the buffer internally
-        int written = uart_write_bytes(port, buffer, size);
+        int written = uart_write_bytes(port, static_cast<const char*>(static_cast<const void*>(buffer)), size);
         return (written < 0) ? 0 : static_cast<size_t>(written);
     } else {
-        // Fallback to ROM UART (byte-by-byte)
-        for (size_t i = 0; i < size; i++) {
-            esp_rom_output_tx_one_char(static_cast<char>(buffer[i]));
-        }
-        return size;
+        return writeRom(buffer, size);
     }
 }
 
-void UartEsp32::writeln(const char* str) FL_NOEXCEPT {
+#if ESP_IDF_VERSION_4_OR_HIGHER
+// Weak references: they resolve only when another component (Arduino
+// Serial, a UartEsp32 instance, ...) already links the SDK UART driver, so
+// writeRom() never pulls the driver into a sketch on its own (#4982).
+#pragma weak uart_is_driver_installed
+#pragma weak uart_write_bytes
+#endif
+
+size_t UartEsp32::writeRom(const u8* buffer, size_t size) FL_NO_EXCEPT {
+    if (!buffer)
+        return 0;
+#if ESP_IDF_VERSION_4_OR_HIGHER
+    // An installed console driver owns the TX FIFO; queue behind its ring
+    // buffer so output stays ordered with Serial.write() and friends.
+    if (&uart_is_driver_installed && &uart_write_bytes &&
+        uart_is_driver_installed(UART_NUM_0)) {
+        const int written = uart_write_bytes(
+            UART_NUM_0, static_cast<const char*>(static_cast<const void*>(buffer)), size);
+        if (written >= 0) {
+            return static_cast<size_t>(written);
+        }
+        // Driver removed between the check and the write: use the ROM path.
+    }
+#endif
+    // ROM UART (byte-by-byte, blocks while the FIFO is full)
+    for (size_t i = 0; i < size; i++) {
+        esp_rom_output_tx_one_char(static_cast<char>(buffer[i]));
+    }
+    return size;
+}
+
+void UartEsp32::waitRomIdle() FL_NO_EXCEPT {
+    // ROM routine: no SDK driver. Lets ROM-written bytes leave the FIFO
+    // before a driver install reconfigures UART0 and resets it. An installed
+    // driver (which may use flow control) owns the FIFO: no unbounded wait.
+#if ESP_IDF_VERSION_4_OR_HIGHER
+    if (&uart_is_driver_installed && uart_is_driver_installed(UART_NUM_0)) {
+        return;
+    }
+#endif
+    esp_rom_output_tx_wait_idle(0);
+}
+
+void UartEsp32::writeln(const char* str) FL_NO_EXCEPT {
     if (!str)
         return;
 
@@ -412,7 +532,7 @@ void UartEsp32::writeln(const char* str) FL_NOEXCEPT {
     }
 }
 
-int UartEsp32::available() FL_NOEXCEPT {
+int UartEsp32::available() FL_NO_EXCEPT {
     if (!mBuffered) {
         return 0;  // Driver not installed, no data available
     }
@@ -427,7 +547,7 @@ int UartEsp32::available() FL_NOEXCEPT {
     return static_cast<int>(available);
 }
 
-int UartEsp32::read() FL_NOEXCEPT {
+int UartEsp32::read() FL_NO_EXCEPT {
     if (!mBuffered) {
         return -1;  // Driver not installed, cannot read
     }
@@ -443,7 +563,7 @@ int UartEsp32::read() FL_NOEXCEPT {
     }
 }
 
-bool UartEsp32::flush(u32 timeoutMs) FL_NOEXCEPT {
+bool UartEsp32::flush(u32 timeoutMs) FL_NO_EXCEPT {
     if (!mBuffered) {
         return false;  // Driver not installed, cannot flush
     }

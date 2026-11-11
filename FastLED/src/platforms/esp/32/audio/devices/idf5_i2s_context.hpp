@@ -31,7 +31,7 @@ struct I2SContext {
     i2s_std_config_t std_config;
 };
 
-I2SContext make_context(const audio::ConfigI2S &config) FL_NOEXCEPT {
+I2SContext make_context(const audio::ConfigI2S &config) FL_NO_EXCEPT {
     auto detect_slot_mode = [](audio::AudioChannel value) -> i2s_slot_mode_t {
         switch (value) {
         case audio::AudioChannel::Left:
@@ -82,34 +82,34 @@ I2SContext make_context(const audio::ConfigI2S &config) FL_NOEXCEPT {
     auto slot_mask = detect_slot_mask(config.mAudioChannel);
 
     // Create standard I2S configuration
+#if SOC_I2S_HW_VERSION_1
+    i2s_std_slot_config_t slot_cfg = {
+        .data_bit_width = bit_width,
+        .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
+        .slot_mode = slot_mode,
+        .slot_mask = slot_mask,
+        .ws_width = 32,
+        .ws_pol = false,
+        .bit_shift = true,
+        .msb_right = false,
+    };
+#else
+    i2s_std_slot_config_t slot_cfg = {
+        .data_bit_width = bit_width,
+        .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
+        .slot_mode = slot_mode,
+        .slot_mask = slot_mask,
+        .ws_width = 32,
+        .ws_pol = false,
+        .bit_shift = true,
+        .left_align = true,
+        .big_endian = false,
+        .bit_order_lsb = false,
+    };
+#endif
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
-        .slot_cfg =
-#if SOC_I2S_HW_VERSION_1
-            {
-                .data_bit_width = bit_width,
-                .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
-                .slot_mode = slot_mode,
-                .slot_mask = slot_mask,
-                .ws_width = 32,
-                .ws_pol = false,
-                .bit_shift = true,
-                .msb_right = false,
-            },
-#else
-            {
-                .data_bit_width = bit_width,
-                .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
-                .slot_mode = slot_mode,
-                .slot_mask = slot_mask,
-                .ws_width = 32,
-                .ws_pol = false,
-                .bit_shift = true,
-                .left_align = true,
-                .big_endian = false,
-                .bit_order_lsb = false,
-            },
-#endif
+        .slot_cfg = slot_cfg,
         .gpio_cfg = {.mclk = GPIO_NUM_NC,
                      .bclk = static_cast<gpio_num_t>(pin_clk),
                      .ws = static_cast<gpio_num_t>(pin_ws),
@@ -123,7 +123,7 @@ I2SContext make_context(const audio::ConfigI2S &config) FL_NOEXCEPT {
     return out;
 }
 
-I2SContext i2s_audio_init(const audio::ConfigI2S &config) FL_NOEXCEPT {
+I2SContext i2s_audio_init(const audio::ConfigI2S &config) FL_NO_EXCEPT {
     I2SContext ctx = make_context(config);
 
     // Create I2S channel configuration with DMA buffer settings
@@ -153,7 +153,7 @@ I2SContext i2s_audio_init(const audio::ConfigI2S &config) FL_NOEXCEPT {
 }
 
 size_t i2s_read_raw_samples(const I2SContext &ctx,
-                            audio_sample_t (&buffer)[I2S_AUDIO_BUFFER_LEN]) FL_NOEXCEPT {
+                            audio_sample_t (&buffer)[I2S_AUDIO_BUFFER_LEN]) FL_NO_EXCEPT {
     size_t bytes_read = 0;
 
     esp_err_t result =
@@ -168,7 +168,7 @@ size_t i2s_read_raw_samples(const I2SContext &ctx,
     return 0;
 }
 
-void i2s_audio_destroy(const I2SContext &ctx) FL_NOEXCEPT {
+void i2s_audio_destroy(const I2SContext &ctx) FL_NO_EXCEPT {
     if (ctx.rx_handle != nullptr) {
         // Disable the channel first
         i2s_channel_disable(ctx.rx_handle);

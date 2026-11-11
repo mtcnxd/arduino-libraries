@@ -13,6 +13,9 @@ namespace fl {
 
 // Forward declarations (no ESP-IDF headers in this file)
 struct UartConfig;
+namespace platforms {
+class EspIO;
+}
 
 /**
  * @brief UART port identifiers (platform-agnostic)
@@ -141,27 +144,27 @@ struct UartPinConfig {
     UartPinConfig() = default;
 
     // Constructor with all parameters
-    UartPinConfig(int tx, int rx, int rts, int cts) FL_NOEXCEPT
+    UartPinConfig(int tx, int rx, int rts, int cts) FL_NO_EXCEPT
         : txPin(tx), rxPin(rx), rtsPin(rts), ctsPin(cts) {}
 
     /**
      * @brief No pin configuration (use bootloader defaults)
      */
-    static UartPinConfig useDefaults() FL_NOEXCEPT {
+    static UartPinConfig useDefaults() FL_NO_EXCEPT {
         return UartPinConfig{};
     }
 
     /**
      * @brief TX/RX only (typical for simple UART)
      */
-    static UartPinConfig basic(int tx, int rx) FL_NOEXCEPT {
+    static UartPinConfig basic(int tx, int rx) FL_NO_EXCEPT {
         return UartPinConfig{tx, rx, -1, -1};
     }
 
     /**
      * @brief Full configuration with hardware flow control
      */
-    static UartPinConfig withFlowControl(int tx, int rx, int rts, int cts) FL_NOEXCEPT {
+    static UartPinConfig withFlowControl(int tx, int rx, int rts, int cts) FL_NO_EXCEPT {
         return UartPinConfig{tx, rx, rts, cts};
     }
 };
@@ -213,7 +216,7 @@ struct UartConfig {
      * Uses lowest priority, ISR in flash (fragile but minimal overhead).
      * Suitable for non-critical data streams.
      */
-    static UartConfig minimal(UartPort port = UartPort::UART0) FL_NOEXCEPT {
+    static UartConfig minimal(UartPort port = UartPort::UART0) FL_NO_EXCEPT {
         UartConfig config;
         config.port = port;
         return config;
@@ -229,7 +232,7 @@ struct UartConfig {
      *
      * Recommended for: Debug UART, console I/O, critical data streams
      */
-    static UartConfig reliable(UartPort port = UartPort::UART0) FL_NOEXCEPT {
+    static UartConfig reliable(UartPort port = UartPort::UART0) FL_NO_EXCEPT {
         UartConfig config;
         config.port = port;
         config.intrPriority = UartIntrPriority::LEVEL3;  // High priority
@@ -243,7 +246,7 @@ struct UartConfig {
      * Large buffers + high priority + hardware flow control.
      * Suitable for: GPS, sensors, binary protocols
      */
-    static UartConfig highSpeed(UartPort port, u32 baudRate) FL_NOEXCEPT {
+    static UartConfig highSpeed(UartPort port, u32 baudRate) FL_NO_EXCEPT {
         UartConfig config;
         config.port = port;
         config.baudRate = baudRate;
@@ -265,7 +268,7 @@ struct UartConfig {
      *
      * Suitable for: Modems, AT command parsers
      */
-    static UartConfig eventDriven(UartPort port, size_t queueSize = 10) FL_NOEXCEPT {
+    static UartConfig eventDriven(UartPort port, size_t queueSize = 10) FL_NO_EXCEPT {
         UartConfig config;
         config.port = port;
         config.intrPriority = UartIntrPriority::LEVEL3;
@@ -280,7 +283,7 @@ struct UartConfig {
      * Automatic direction control via RTS pin.
      * Suitable for: RS485 networks, Modbus RTU
      */
-    static UartConfig rs485(UartPort port, int txPin, int rxPin, int dirPin) FL_NOEXCEPT {
+    static UartConfig rs485(UartPort port, int txPin, int rxPin, int dirPin) FL_NO_EXCEPT {
         UartConfig config;
         config.port = port;
         config.intrPriority = UartIntrPriority::LEVEL3;
@@ -298,7 +301,7 @@ struct UartConfig {
      *
      * Override default pins (useful when default pins conflict with other peripherals).
      */
-    static UartConfig withPins(UartPort port, int txPin, int rxPin) FL_NOEXCEPT {
+    static UartConfig withPins(UartPort port, int txPin, int rxPin) FL_NO_EXCEPT {
         UartConfig config;
         config.port = port;
         config.pins = UartPinConfig::basic(txPin, rxPin);
@@ -350,7 +353,7 @@ public:
      * 4. If not installed, configures and installs driver with all settings from config
      * 5. If installation fails, falls back to ROM UART
      */
-    explicit UartEsp32(const UartConfig& config) FL_NOEXCEPT;
+    explicit UartEsp32(const UartConfig& config) FL_NO_EXCEPT;
 
     /**
      * @brief Destructor - deallocates UART from UartManager
@@ -362,8 +365,8 @@ public:
     UartEsp32& operator=(const UartEsp32&) = delete;
 
     // Enable move
-    UartEsp32(UartEsp32&& other) FL_NOEXCEPT;
-    UartEsp32& operator=(UartEsp32&& other) FL_NOEXCEPT;
+    UartEsp32(UartEsp32&& other) FL_NO_EXCEPT;
+    UartEsp32& operator=(UartEsp32&& other) FL_NO_EXCEPT;
 
     /**
      * @brief Write string to UART
@@ -372,7 +375,7 @@ public:
      * Buffered mode: Copies to TX ring buffer (non-blocking)
      * Fallback mode: Writes directly to FIFO (may block if full)
      */
-    void write(const char* str) FL_NOEXCEPT;
+    void write(const char* str) FL_NO_EXCEPT;
 
     /**
      * @brief Write raw bytes to UART (binary data)
@@ -383,13 +386,28 @@ public:
      * Buffered mode: Copies to TX ring buffer (non-blocking)
      * Fallback mode: Writes directly to FIFO (may block if full)
      */
-    size_t write(const u8* buffer, size_t size) FL_NOEXCEPT;
+    size_t write(const u8* buffer, size_t size) FL_NO_EXCEPT;
+
+    /**
+     * @brief Write raw bytes to UART0 without owning or linking its driver
+     *
+     * On ESP-IDF 4+, queues through an already-installed SDK driver (e.g.
+     * Arduino Serial) so output stays ordered; otherwise, and always on IDF
+     * 3.x, blocking ROM FIFO writes. Lets output-only callers print without
+     * linking the SDK UART driver.
+     */
+    static size_t writeRom(const u8* buffer, size_t size) FL_NO_EXCEPT;
+
+    /**
+     * @brief Wait (ROM routine) until UART0 has transmitted its TX FIFO
+     */
+    static void waitRomIdle() FL_NO_EXCEPT;
 
     /**
      * @brief Write string with newline to UART
      * @param str Null-terminated string to write
      */
-    void writeln(const char* str) FL_NOEXCEPT;
+    void writeln(const char* str) FL_NO_EXCEPT;
 
     /**
      * @brief Check how many bytes are available to read
@@ -397,7 +415,7 @@ public:
      *
      * Only works in buffered mode. Returns 0 in fallback mode.
      */
-    int available() FL_NOEXCEPT;
+    int available() FL_NO_EXCEPT;
 
     /**
      * @brief Read single byte from UART
@@ -406,7 +424,7 @@ public:
      * Non-blocking read (timeout=0).
      * Only works in buffered mode. Returns -1 in fallback mode.
      */
-    int read() FL_NOEXCEPT;
+    int read() FL_NO_EXCEPT;
 
     /**
      * @brief Flush TX buffer and wait for transmission to complete
@@ -416,7 +434,7 @@ public:
      * Blocks until all buffered data is transmitted.
      * Only works in buffered mode.
      */
-    bool flush(u32 timeoutMs = 1000) FL_NOEXCEPT;
+    bool flush(u32 timeoutMs = 1000) FL_NO_EXCEPT;
 
     /**
      * @brief Get event queue handle (if configured)
@@ -425,34 +443,43 @@ public:
      * Use this to receive UART events (data arrival, errors, etc.).
      * Only available if eventQueueSize > 0 in config.
      */
-    void* getEventQueue() const FL_NOEXCEPT { return mEventQueue; }
+    void* getEventQueue() const FL_NO_EXCEPT { return mEventQueue; }
 
     /**
      * @brief Check if driver is in buffered mode
      * @return true if UART driver successfully installed, false if using ROM fallback
      */
-    bool isBuffered() const FL_NOEXCEPT { return mBuffered; }
+    bool isBuffered() const FL_NO_EXCEPT { return mBuffered; }
+    bool isReady() const FL_NO_EXCEPT { return isBuffered(); }
 
     /**
      * @brief Get UART port configuration
      * @return UART port (UART0, UART1, UART2)
      */
-    UartPort getPort() const FL_NOEXCEPT { return mConfig.port; }
+    UartPort getPort() const FL_NO_EXCEPT { return mConfig.port; }
 
     /**
      * @brief Get current baud rate
      * @return Baud rate in bits per second
      */
-    u32 getBaudRate() const FL_NOEXCEPT { return mConfig.baudRate; }
+    u32 getBaudRate() const FL_NO_EXCEPT { return mConfig.baudRate; }
+
+    /// Change the active port baud rate; preserve configuration on failure.
+    bool setBaudRate(u32 baudRate) FL_NO_EXCEPT;
 
 private:
+    // Fixed console configuration; other callers retain the configured API.
+    UartEsp32() FL_NO_EXCEPT;
+    friend class platforms::EspIO;
+
     UartConfig mConfig;     // Configuration parameters
     int mPortInt;           // ESP-IDF uart_port_t (stored as int to avoid including driver/uart.h)
     bool mBuffered;         // true if driver installed, false if using ROM fallback
     void* mEventQueue;      // FreeRTOS queue handle (if event queue configured)
 
     // Helper: Initialize UART driver (called by constructor)
-    bool initDriver() FL_NOEXCEPT;
+    void initialize(const UartConfig& config) FL_NO_EXCEPT;
+    bool initDriver(const UartConfig& config) FL_NO_EXCEPT;
 };
 
 } // namespace fl

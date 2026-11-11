@@ -2,10 +2,12 @@
 
 
 #include "fl/stl/vector.h"
+#include "fl/stl/string.h"
 #include "fl/stl/span.h"  // For fl::span
 #include "fl/stl/cstddef.h"
 #include "fl/stl/new.h"
 #include "test.h"
+#include "fl/stl/static_assert.h"
 #include "fl/stl/allocator.h"
 #include "fl/stl/vector.h"
 #include "fl/stl/move.h"
@@ -15,6 +17,56 @@
 
 FL_TEST_FILE(FL_FILEPATH) {
 
+struct OpsMoveOnly {
+    OpsMoveOnly() = delete;
+    explicit OpsMoveOnly(int) FL_NO_EXCEPT {}
+    OpsMoveOnly(const OpsMoveOnly&) = delete;
+    OpsMoveOnly(OpsMoveOnly&&) FL_NO_EXCEPT {}
+    OpsMoveOnly& operator=(OpsMoveOnly&&) = delete;
+    ~OpsMoveOnly() FL_NO_EXCEPT {}
+};
+
+// Aggregate initialization must remain a constant expression even in C++11.
+// The restricted type also proves unsupported operations stay null without
+// instantiating their construction or assignment thunks.
+constexpr fl::vector_element_ops string_ops = {
+    fl::detail::get_copy_construct_fn<fl::string>(),
+    fl::detail::get_move_construct_fn<fl::string>(),
+    fl::detail::get_default_construct_fn<fl::string>(),
+    fl::detail::get_swap_fn<fl::string>(),
+    &fl::detail::vector_destroy_n<fl::string>
+};
+constexpr fl::vector_element_ops move_only_ops = {
+    fl::detail::get_copy_construct_fn<OpsMoveOnly>(),
+    fl::detail::get_move_construct_fn<OpsMoveOnly>(),
+    fl::detail::get_default_construct_fn<OpsMoveOnly>(),
+    fl::detail::get_swap_fn<OpsMoveOnly>(),
+    &fl::detail::vector_destroy_n<OpsMoveOnly>
+};
+FL_STATIC_ASSERT(string_ops.copy_construct != nullptr &&
+                  string_ops.move_construct != nullptr &&
+                  string_ops.default_construct != nullptr &&
+                  string_ops.swap_elements != nullptr &&
+                  string_ops.destroy_n != nullptr,
+              "string operations must be constant initialized");
+FL_STATIC_ASSERT(move_only_ops.copy_construct == nullptr &&
+                  move_only_ops.move_construct != nullptr &&
+                  move_only_ops.default_construct == nullptr &&
+                  move_only_ops.swap_elements == nullptr &&
+                  move_only_ops.destroy_n != nullptr,
+              "constant initialization must preserve operation SFINAE");
+
+class rejecting_memory_resource : public fl::memory_resource {
+  public:
+    bool reject = false;
+
+  protected:
+    void* do_allocate(fl::size bytes) override {
+        return reject ? nullptr : fl::Malloc(bytes);
+    }
+
+    void do_deallocate(void* ptr, fl::size) override { fl::Free(ptr); }
+};
 
 
 FL_TEST_CASE("Fixed vector simple") {
@@ -531,6 +583,23 @@ FL_TEST_CASE("vector") {
     }
 }
 
+FL_TEST_CASE("vector range insert remains valid when growth fails") {
+    rejecting_memory_resource resource;
+    fl::vector<int> values(&resource);
+    values.reserve(3);
+    values.push_back(1);
+    values.push_back(2);
+
+    resource.reject = true;
+    int source[] = {7, 8, 9};
+    auto inserted = values.insert(values.begin() + 1, source, source + 3);
+
+    FL_CHECK_EQ(inserted, values.begin() + 1);
+    FL_REQUIRE_EQ(values.size(), 3u);
+    FL_CHECK_EQ(values[0], 1);
+    FL_CHECK_EQ(values[1], 7);
+    FL_CHECK_EQ(values[2], 2);
+}
 
 FL_TEST_CASE("Initializer list constructors") {
     
@@ -782,6 +851,51 @@ FL_TEST_CASE("is_trivially_copyable trait") {
             ~NonTriviallyCopyable() { delete ptr; }  // ok bare allocation
         };
         FL_CHECK_FALSE(fl::is_trivially_copyable<NonTriviallyCopyable>::value);
+    }
+}
+
+namespace {
+struct BigNonTrivial {  // > 64 bytes
+    fl::string name;
+    char pad[96];
+    explicit BigNonTrivial(const char* n = "") : name(n) { pad[0] = 0; }
+};
+}  // namespace
+
+FL_TEST_CASE("VectorN swap of inline non-trivial elements (#4794)") {
+    FL_SUBCASE("unequal sizes, small elements") {
+        fl::VectorN<fl::string, 4> a;
+        fl::VectorN<fl::string, 4> b;
+        a.push_back("a0"); a.push_back("a1"); a.push_back("a2");
+        b.push_back("b0");
+        a.swap(b);
+        FL_REQUIRE_EQ(a.size(), 1u);
+        FL_REQUIRE_EQ(b.size(), 3u);
+        FL_CHECK(a[0] == "b0");
+        FL_CHECK(b[0] == "a0");
+        FL_CHECK(b[1] == "a1");
+        FL_CHECK(b[2] == "a2");
+    }
+    FL_SUBCASE("self-swap leaves contents intact") {
+        fl::VectorN<fl::string, 4> a;
+        a.push_back("x"); a.push_back("y");
+        a.swap(a);
+        FL_REQUIRE_EQ(a.size(), 2u);
+        FL_CHECK(a[0] == "x");
+        FL_CHECK(a[1] == "y");
+    }
+    FL_SUBCASE("large elements") {
+        fl::VectorN<BigNonTrivial, 2> a;
+        fl::VectorN<BigNonTrivial, 2> b;
+        a.push_back(BigNonTrivial("first"));
+        b.push_back(BigNonTrivial("second"));
+        b.push_back(BigNonTrivial("third"));
+        a.swap(b);
+        FL_REQUIRE_EQ(a.size(), 2u);
+        FL_REQUIRE_EQ(b.size(), 1u);
+        FL_CHECK(a[0].name == "second");
+        FL_CHECK(a[1].name == "third");
+        FL_CHECK(b[0].name == "first");
     }
 }
 

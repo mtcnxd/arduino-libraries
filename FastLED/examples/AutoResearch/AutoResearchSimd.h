@@ -8,6 +8,7 @@
 #pragma once
 
 #include <FastLED.h>
+#include "fl/stl/chrono.h"
 #include "fl/math/simd.h"
 #include "fl/stl/sstream.h"
 #include "fl/math/fixed_point/s8x8.h"
@@ -1110,7 +1111,15 @@ inline bool test_f32_pipeline_mul_add_clamp() {
 // Each test runs 4-wide unrolled loops with feedback to prevent elimination.
 // s16x16x4 has no division operator, so that cell is skipped.
 
-static volatile uint32_t g_bench_sink;
+struct SimdBenchmarkState {
+    volatile uint32_t sink;
+
+    SimdBenchmarkState() : sink(0) {}
+};
+
+inline SimdBenchmarkState& simdBenchmarkState() {
+    return fl::SingletonShared<SimdBenchmarkState>::instance();
+}
 
 struct BenchmarkResult {
     int64_t iterations;
@@ -1126,16 +1135,16 @@ template <typename Op>
 inline int64_t benchFloat4(int iters, Op op) {
     float a0 = 1.5f, a1 = 2.3f, a2 = 0.7f, a3 = 3.1f;
     float b0 = 0.5f, b1 = 1.2f, b2 = 2.0f, b3 = 0.9f;
-    uint32_t t0 = micros();
+    uint32_t t0 = fl::micros();
     for (int i = 0; i < iters; i++) {
         a0 = op(a0, b0); a1 = op(a1, b1);
         a2 = op(a2, b2); a3 = op(a3, b3);
         b0 = a0 + 0.001f; b1 = a1 + 0.001f;
         b2 = a2 + 0.001f; b3 = a3 + 0.001f;
     }
-    uint32_t t1 = micros();
+    uint32_t t1 = fl::micros();
     uint32_t tmp; fl::memcpy(&tmp, &a0, sizeof(tmp));
-    g_bench_sink = tmp;
+    simdBenchmarkState().sink = tmp;
     return static_cast<int64_t>(t1 - t0);
 }
 
@@ -1145,15 +1154,15 @@ inline int64_t benchS16x16_4(int iters, Op op) {
     fl::s16x16 a0(1.5f), a1(2.3f), a2(0.7f), a3(3.1f);
     fl::s16x16 b0(0.5f), b1(1.2f), b2(2.0f), b3(0.9f);
     fl::s16x16 bump = fl::s16x16::from_raw(1);
-    uint32_t t0 = micros();
+    uint32_t t0 = fl::micros();
     for (int i = 0; i < iters; i++) {
         a0 = op(a0, b0); a1 = op(a1, b1);
         a2 = op(a2, b2); a3 = op(a3, b3);
         b0 = a0 + bump; b1 = a1 + bump;
         b2 = a2 + bump; b3 = a3 + bump;
     }
-    uint32_t t1 = micros();
-    g_bench_sink = static_cast<uint32_t>(a0.raw());
+    uint32_t t1 = fl::micros();
+    simdBenchmarkState().sink = static_cast<uint32_t>(a0.raw());
     return static_cast<int64_t>(t1 - t0);
 }
 
@@ -1167,13 +1176,13 @@ inline int64_t benchSimd4(int iters, Op op) {
         set_u32_4(as_u32(fl::s16x16(0.5f).raw()), as_u32(fl::s16x16(1.2f).raw()),
                   as_u32(fl::s16x16(2.0f).raw()), as_u32(fl::s16x16(0.9f).raw())));
     fl::s16x16x4 bump = fl::s16x16x4::set1(fl::s16x16::from_raw(1));
-    uint32_t t0 = micros();
+    uint32_t t0 = fl::micros();
     for (int i = 0; i < iters; i++) {
         a = op(a, b);
         b = a + bump;
     }
-    uint32_t t1 = micros();
-    g_bench_sink = extract_u32_4(a.raw, 0);
+    uint32_t t1 = fl::micros();
+    simdBenchmarkState().sink = extract_u32_4(a.raw, 0);
     return static_cast<int64_t>(t1 - t0);
 }
 
@@ -1192,15 +1201,15 @@ inline int64_t benchS8x8_4(int iters, Op op) {
     fl::s8x8 a0(1.5f), a1(2.3f), a2(0.7f), a3(3.1f);
     fl::s8x8 b0(0.5f), b1(1.2f), b2(2.0f), b3(0.9f);
     fl::s8x8 bump = fl::s8x8::from_raw(1);
-    uint32_t t0 = micros();
+    uint32_t t0 = fl::micros();
     for (int i = 0; i < iters; i++) {
         a0 = op(a0, b0); a1 = op(a1, b1);
         a2 = op(a2, b2); a3 = op(a3, b3);
         b0 = a0 + bump; b1 = a1 + bump;
         b2 = a2 + bump; b3 = a3 + bump;
     }
-    uint32_t t1 = micros();
-    g_bench_sink = static_cast<uint32_t>(a0.raw());
+    uint32_t t1 = fl::micros();
+    simdBenchmarkState().sink = static_cast<uint32_t>(a0.raw());
     return static_cast<int64_t>(t1 - t0);
 }
 
@@ -1210,15 +1219,15 @@ inline int64_t benchU16x16_4(int iters, Op op) {
     fl::u16x16 a0(1.5f), a1(2.3f), a2(0.7f), a3(3.1f);
     fl::u16x16 b0(0.5f), b1(1.2f), b2(2.0f), b3(0.9f);
     fl::u16x16 bump = fl::u16x16::from_raw(1);
-    uint32_t t0 = micros();
+    uint32_t t0 = fl::micros();
     for (int i = 0; i < iters; i++) {
         a0 = op(a0, b0); a1 = op(a1, b1);
         a2 = op(a2, b2); a3 = op(a3, b3);
         b0 = a0 + bump; b1 = a1 + bump;
         b2 = a2 + bump; b3 = a3 + bump;
     }
-    uint32_t t1 = micros();
-    g_bench_sink = static_cast<uint32_t>(a0.raw());
+    uint32_t t1 = fl::micros();
+    simdBenchmarkState().sink = static_cast<uint32_t>(a0.raw());
     return static_cast<int64_t>(t1 - t0);
 }
 

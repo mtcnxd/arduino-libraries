@@ -1,9 +1,10 @@
 // ok standalone
+#include "fl/stl/compiler_control.h"  // FL_NO_INLINE
 #include "FastLED.h"
 #include "fl/stl/align.h"
 #include "fl/stl/int.h"
 #include "fl/math/simd.h"  // Platform-dispatched SIMD (gets correct impl automatically)
-#include "fl/math/sin32.h"
+#include "fl/math/sin32_simd.h"
 #include "fl/stl/stdint.h"
 #include "fl/stl/cstring.h"
 #include "fl/stl/stdio.h"
@@ -27,7 +28,7 @@ typedef SinCos32_simd (*sincos_func_t)(simd::simd_u32x4);
 volatile sincos_func_t g_sincos_func = &sincos32_simd;
 
 // Force noinline for this function
-__attribute__((noinline))
+FL_NO_INLINE
 void benchmark_sincos32_simd(int calls) {
     // Pre-generate test angles (16 different angle sets to prevent pattern optimization)
     FL_ALIGNAS(16) u32 angle_sets[16][4];

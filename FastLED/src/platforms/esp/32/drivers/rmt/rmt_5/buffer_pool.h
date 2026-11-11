@@ -34,7 +34,7 @@ namespace fl {
 /// **Thread Safety**: Not thread-safe. ChannelEngineRMT manages synchronization.
 class RMTBufferPool {
 public:
-    RMTBufferPool() FL_NOEXCEPT;
+    RMTBufferPool() FL_NO_EXCEPT;
     ~RMTBufferPool();
 
     // Disable copy/move (pool manages raw pointers)
@@ -48,7 +48,7 @@ public:
     ///
     /// @param size Minimum size needed in bytes
     /// @return Span of acquired buffer (capacity >= size), or empty span on failure
-    fl::span<u8> acquireInternal(fl::size size) FL_NOEXCEPT;
+    fl::span<u8> acquireInternal(fl::size size) FL_NO_EXCEPT;
 
     /// Acquire the DMA buffer (DMA-capable memory)
     /// - Only ONE DMA buffer exists (ESP32 hardware limitation: max 1 RMT channel with DMA)
@@ -57,19 +57,19 @@ public:
     ///
     /// @param size Minimum size needed in bytes
     /// @return Span of acquired DMA buffer (capacity >= size), or empty span on failure
-    fl::span<u8> acquireDMA(fl::size size) FL_NOEXCEPT;
+    fl::span<u8> acquireDMA(fl::size size) FL_NO_EXCEPT;
 
     /// Release an internal buffer back to the pool
     /// - Marks buffer as available for reuse
     /// - Buffer memory is NOT freed (kept for future reuse)
     ///
     /// @param buffer The buffer to release (must be from acquireInternal)
-    void releaseInternal(fl::span<u8> buffer) FL_NOEXCEPT;
+    void releaseInternal(fl::span<u8> buffer) FL_NO_EXCEPT;
 
     /// Release the DMA buffer back to the pool
     /// - Marks DMA buffer as available for reuse
     /// - Buffer memory is NOT freed (kept for future reuse)
-    void releaseDMA() FL_NOEXCEPT;
+    void releaseDMA() FL_NO_EXCEPT;
 
     /// Get pool statistics for debugging
     struct Stats {
@@ -78,7 +78,7 @@ public:
         fl::size dmaBufferCapacity;     // DMA buffer size (0 if not allocated)
         bool dmaBufferInUse;            // Whether DMA buffer is currently in use
     };
-    Stats getStats() const FL_NOEXCEPT;
+    Stats getStats() const FL_NO_EXCEPT;
 
 private:
     /// Internal buffer slot in the pool
@@ -87,7 +87,7 @@ private:
         fl::size capacity; // Allocated size in bytes
         bool inUse;        // Whether buffer is currently acquired
 
-        BufferSlot() : data(nullptr), capacity(0), inUse(false) {}
+        BufferSlot() FL_NO_EXCEPT : data(nullptr), capacity(0), inUse(false) {}
     };
 
     /// DMA buffer (separate from internal pool due to hardware limitations)
@@ -96,7 +96,7 @@ private:
         fl::size capacity; // Allocated size in bytes
         bool inUse;        // Whether buffer is currently acquired
 
-        DMABuffer() : data(nullptr), capacity(0), inUse(false) {}
+        DMABuffer() FL_NO_EXCEPT : data(nullptr), capacity(0), inUse(false) {}
     };
 
     fl::vector<BufferSlot> mInternalBuffers; // Pool of internal DRAM buffers
@@ -104,11 +104,11 @@ private:
 
     /// Find a suitable buffer slot (exact size or larger, not in use)
     /// Returns -1 if no suitable buffer found
-    int findSuitableSlot(fl::size size) FL_NOEXCEPT;
+    int findSuitableSlot(fl::size size) FL_NO_EXCEPT;
 
     /// Allocate a new buffer slot or resize an existing one
     /// Returns -1 on allocation failure
-    int allocateOrResizeSlot(fl::size size) FL_NOEXCEPT;
+    int allocateOrResizeSlot(fl::size size) FL_NO_EXCEPT;
 };
 
 } // namespace fl

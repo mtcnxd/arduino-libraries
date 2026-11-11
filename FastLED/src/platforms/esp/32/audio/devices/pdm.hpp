@@ -3,6 +3,7 @@
 
 // IWYU pragma: private
 
+#include "fl/stl/noexcept.h"
 #include "platforms/esp/is_esp.h"
 
 #include "fl/audio/audio_input.h"
@@ -45,12 +46,12 @@ class PDM_Audio : public audio::IInput {
   public:
     using PDMContext = esp_pdm::PDMContext;
 
-    PDM_Audio(const audio::ConfigPdm &config)
+    PDM_Audio(const audio::ConfigPdm &config) FL_NO_EXCEPT
         : mPdmConfig(config), mHasError(false), mTotalSamplesRead(0) {}
 
     ~PDM_Audio() { stop(); }
 
-    void start() FL_NOEXCEPT override {
+    void start() FL_NO_EXCEPT override {
         if (mPdmContextOpt) {
             FL_WARN("PDM channel is already initialized");
             return;
@@ -65,7 +66,7 @@ class PDM_Audio : public audio::IInput {
         mTotalSamplesRead = 0;
     }
 
-    void stop() FL_NOEXCEPT override {
+    void stop() FL_NO_EXCEPT override {
         if (!mPdmContextOpt) {
             return;
         }
@@ -74,14 +75,14 @@ class PDM_Audio : public audio::IInput {
         mTotalSamplesRead = 0;
     }
 
-    bool error(fl::string *msg = nullptr) FL_NOEXCEPT override {
+    bool error(fl::string *msg = nullptr) FL_NO_EXCEPT override {
         if (msg && mHasError) {
             *msg = mErrorMessage;
         }
         return mHasError;
     }
 
-    audio::Sample read() FL_NOEXCEPT override {
+    audio::Sample read() FL_NO_EXCEPT override {
         if (!mPdmContextOpt) {
             FL_WARN("PDM channel is not initialized");
             return audio::Sample();
@@ -107,7 +108,7 @@ class PDM_Audio : public audio::IInput {
                                             mPdmConfig.mSampleRate);
         mTotalSamplesRead += samples_read;
 
-        fl::span<const i16> data(buf, samples_read);
+        fl::span<const i16> data{buf, static_cast<fl::size>(samples_read)};
         return audio::Sample(data, timestamp_ms);
     }
 

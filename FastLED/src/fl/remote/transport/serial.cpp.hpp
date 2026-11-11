@@ -5,29 +5,62 @@
 
 #include "fl/remote/transport/serial.h"
 #include "fl/stl/cstring.h"
-#include "fl/stl/strstream.h"
+#include "fl/stl/noexcept.h"
 
 namespace fl {
 
-fl::string formatJsonResponse(const fl::json& response, const char* prefix) {
-    // Use sstream to minimize allocations
-    fl::sstream ss;
-
-    // Add prefix if provided
-    if (prefix && prefix[0] != '\0') {
-        ss << prefix;
+namespace {
+// Small error reply used when the response cannot be serialized or framed.
+fl::string outOfMemoryResponse(const char* prefix, fl::size prefixLength) FL_NO_EXCEPT {
+    static const char error[] =
+        "{\"error\":{\"code\":-32603,\"message\":\"Out of memory\"},"
+        "\"id\":null,\"jsonrpc\":\"2.0\"}";
+    fl::string failure;
+    failure.write(prefix, prefixLength);
+    failure.write(error, sizeof(error) - 1);
+    if (failure.size() == prefixLength + sizeof(error) - 1) {
+        return failure;
     }
+    return error;
+}
+} // namespace
 
-    // Serialize to compact JSON
+fl::string formatJsonResponse(const fl::json& response, const char* prefix) FL_NO_EXCEPT {
+    // Reuse the serialized body. A second growing stream kept two full copies
+    // of large discovery responses alive and could exhaust ESP32's heap.
     fl::string jsonStr = response.to_string();
-
-    // Stream copy with inline filtering (replace newlines with spaces)
-    for (size_t i = 0; i < jsonStr.size(); ++i) {
-        char c = jsonStr[i];
-        ss << ((c == '\n' || c == '\r') ? ' ' : c);
+    const fl::size bodyLength = jsonStr.size();
+    const fl::size prefixLength = prefix ? fl::strlen(prefix) : 0;
+    if (bodyLength == 0) {
+        // to_string() returns empty only when its buffer could not be
+        // allocated; never publish a bare prefix (FastLED #4899).
+        return outOfMemoryResponse(prefix, prefixLength);
+    }
+    if (prefixLength != 0) {
+        const fl::size totalLength = bodyLength + prefixLength;
+        if (totalLength >= bodyLength && totalLength != fl::string::npos) {
+            jsonStr.reserve(totalLength);
+            jsonStr.write(prefix, prefixLength);
+        }
+        if (jsonStr.size() != totalLength || totalLength < bodyLength) {
+            // Release the large body before allocating the small error reply.
+            // A failed extension must not publish partially formed JSON.
+            jsonStr.clear(true);
+            return outOfMemoryResponse(prefix, prefixLength);
+        }
+        char *bytes = &jsonStr[0]; // fl-lint: container-data-ptr-ok - contiguous mutable string for memmove/memcpy interop
+        fl::memmove(bytes + prefixLength, bytes, bodyLength);
+        fl::memcpy(bytes, prefix, prefixLength);
     }
 
-    return ss.str();
+    // Preserve prefix bytes; normalize only the serialized body in place.
+    for (fl::size i = prefixLength; i < jsonStr.size(); ++i) {
+        char &byte = jsonStr[i];
+        if (byte == '\n' || byte == '\r') {
+            byte = ' ';
+        }
+    }
+    return jsonStr;
 }
 
 } // namespace fl

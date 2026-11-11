@@ -18,6 +18,7 @@
 #ifdef FASTLED_STUB_IMPL  // Mock tests only run on stub platform
 
 #include "platforms/shared/mock/esp/32/drivers/rmt5_peripheral_mock.h"
+#include "platforms/shared/mock/esp/32/drivers/rmt5_support_stubs.h"
 #include "platforms/esp/32/drivers/rmt/rmt_5/channel_driver_rmt.h"
 #include "fl/chipsets/led_timing.h"
 #include "fl/chipsets/chipset_timing_config.h"
@@ -259,6 +260,40 @@ FL_TEST_CASE("RMT5 driver - same pin sequential frames") {
     }
 }
 
+// FastLED#4905: another peripheral (or pinMode) can take the pin of an idle
+// cached channel. Reusing that channel must route the pin back to it, and
+// must leave an untouched pin alone.
+FL_TEST_CASE("RMT5 driver - reused channel reclaims a rerouted pin") {
+    resetMock();
+    auto& mock = Rmt5PeripheralMock::instance();
+    auto driver = ChannelEngineRMT::create();
+    uint8_t red[] = {0xFF, 0x00, 0x00};
+    void* channel_handle = reinterpret_cast<void*>(1);
+
+    auto showFrame = [&]() {
+        auto ch = createChannelData(18, 1, red);
+        driver->enqueue(ch);
+        driver->show();
+        mock.simulateTransmitDone(channel_handle);
+        for (int i = 0; i < 10 && ch->isInUse(); i++) {
+            driver->poll();
+        }
+    };
+
+    showFrame();
+    FL_REQUIRE(mock.getChannelCount() == 1);
+    showFrame();
+    FL_CHECK(mock.getPinRebindCount() == 0);
+
+    mock.simulatePinReroute(18);
+    showFrame();
+    FL_CHECK(mock.getPinRebindCount() == 1);
+    FL_CHECK(mock.getChannelCount() == 1);
+
+    showFrame();
+    FL_CHECK(mock.getPinRebindCount() == 1);
+}
+
 //=============================================================================
 // Test Suite: State Machine
 //=============================================================================
@@ -298,6 +333,97 @@ FL_TEST_CASE("RMT5 driver - state progression READY → BUSY → READY") {
 //=============================================================================
 // Test Suite: Error Handling
 //=============================================================================
+
+FL_TEST_CASE("RMT5 driver - failed channel setup rolls back and allows retry") {
+    resetMock();
+    auto& mock = Rmt5PeripheralMock::instance();
+    auto& memMgr = RmtMemoryManager::instance();
+    const size_t rollbacksBefore = memMgr.rollbackAllocationCount();
+    auto driver = ChannelEngineRMT::create();
+
+    // The mock rejects a negative GPIO after the driver has reserved RMT
+    // memory, exercising the production createChannel() failure cleanup.
+    auto invalid = createChannelData(-1, 1);
+    driver->enqueue(invalid);
+    driver->show();
+
+    FL_CHECK_EQ(mock.getChannelCount(), 0u);
+    FL_CHECK_GT(memMgr.rollbackAllocationCount(), rollbacksBefore);
+    FL_REQUIRE(driver->poll() == DriverState::READY);
+    FL_CHECK_FALSE(invalid->isInUse());
+
+    // A fresh frame must be able to reserve memory and create a valid channel.
+    auto valid = createChannelData(18, 1);
+    driver->enqueue(valid);
+    driver->show();
+
+    FL_CHECK_EQ(mock.getChannelCount(), 1u);
+    FL_CHECK_EQ(mock.getTransmissionCount(), 1u);
+
+    mock.simulateTransmitDone(reinterpret_cast<void*>(1));
+    for (int i = 0; i < 10 && valid->isInUse(); i++) {
+        driver->poll();
+    }
+    FL_CHECK_FALSE(valid->isInUse());
+}
+
+FL_TEST_CASE("RMT5 driver - failed strip setup does not drop a valid strip") {
+    resetMock();
+    auto& mock = Rmt5PeripheralMock::instance();
+    auto driver = ChannelEngineRMT::create();
+
+    // The larger invalid strip is attempted first; its failure must not stop
+    // the valid strip in the same frame from getting a channel.
+    auto invalid = createChannelData(-1, 10);
+    auto valid = createChannelData(18, 1);
+    driver->enqueue(invalid);
+    driver->enqueue(valid);
+    driver->show();
+
+    FL_CHECK_EQ(mock.getChannelCount(), 1u);
+    FL_CHECK_EQ(mock.getTransmissionCount(), 1u);
+
+    // Finish the transmission so the driver destructor does not block
+    // waiting for READY.
+    mock.simulateTransmitDone(reinterpret_cast<void*>(1));
+    for (int i = 0; i < 10 && valid->isInUse(); i++) {
+        driver->poll();
+    }
+    FL_CHECK_FALSE(valid->isInUse());
+    FL_CHECK(driver->poll() == DriverState::READY);
+}
+
+FL_TEST_CASE("RMT5 driver - strips beyond channel limit wait for a free channel") {
+    resetMock();
+    auto& mock = Rmt5PeripheralMock::instance();
+    mock.setMaxChannels(1);
+    auto driver = ChannelEngineRMT::create();
+
+    // Two strips, one hardware channel: the second must wait for the first
+    // to finish and then reuse its channel, not be dropped.
+    auto first = createChannelData(18, 10);
+    auto second = createChannelData(19, 5);
+    driver->enqueue(first);
+    driver->enqueue(second);
+    driver->show();
+
+    FL_CHECK_EQ(mock.getChannelCount(), 1u);
+    FL_CHECK_EQ(mock.getTransmissionCount(), 1u);
+    FL_CHECK(driver->poll() == DriverState::BUSY);
+
+    mock.simulateTransmitDone(reinterpret_cast<void*>(1));
+    driver->poll();
+    FL_CHECK_EQ(mock.getTransmissionCount(), 2u);
+
+    for (int i = 0; i < 10 && second->isInUse(); i++) {
+        mock.simulateTransmitDone(reinterpret_cast<void*>(2));
+        driver->poll();
+    }
+    FL_CHECK_FALSE(first->isInUse());
+    FL_CHECK_FALSE(second->isInUse());
+    FL_CHECK(driver->poll() == DriverState::READY);
+    mock.setMaxChannels(0);
+}
 
 // TODO: Re-enable after fixing driver failure handling
 // FL_TEST_CASE("RMT5 driver - handle transmission failure") {

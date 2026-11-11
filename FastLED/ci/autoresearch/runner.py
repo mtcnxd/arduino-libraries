@@ -30,6 +30,7 @@ from ci.autoresearch.phases import (
     _run_native_autoresearch,
     _run_schema_and_pin_setup,
     _run_tests_or_special_mode,
+    stop_autoresearch_watchdog,
 )
 from ci.util.global_interrupt_handler import (
     handle_keyboard_interrupt,
@@ -83,6 +84,27 @@ async def run(args: Args | None = None) -> int:
     args = args or Args.parse_args()
     assert args is not None
 
+    if args.usb_console:
+        from ci.autoresearch.usb_console import run_usb_console
+
+        return await run_usb_console(args)
+
+    if args.spi_provider:
+        from ci.autoresearch.spi_provider import run_spi_provider
+
+        return await run_spi_provider(args)
+    if args.spi_provider_native:
+        print("--spi-provider-native requires --spi-provider", file=sys.stderr)
+        return 1
+
+    if args.embedded_fs:
+        from ci.autoresearch.embedded_fs import run_embedded_fs
+
+        return await run_embedded_fs(args)
+    if args.embedded_fs_provider or args.embedded_fs_format_fixture:
+        print("Embedded-storage options require --embedded-fs", file=sys.stderr)
+        return 1
+
     if args.quiet:
         args.skip_lint = True
         args.skip_schema = True
@@ -92,6 +114,18 @@ async def run(args: Args | None = None) -> int:
     if isinstance(result, int):
         return result
     ctx = result
+
+    try:
+        return await _run_context(ctx, args)
+    finally:
+        # The watchdog remains armed through deploy, RPC work, and every
+        # phase-level cleanup path. It is safe to cancel only after this
+        # complete top-level run has returned.
+        stop_autoresearch_watchdog(ctx)
+
+
+async def _run_context(ctx: Any, args: Args) -> int:
+    """Run all post-parse phases while the caller owns watchdog cleanup."""
 
     # Early return: --decode mode
     if ctx.decode_mode:

@@ -5,6 +5,7 @@
 
 #include "fl/stl/json.h"
 #include "fl/math/screenmap.h"
+#include "fl/math/fixed_point.h"
 #include "fl/stl/map.h"
 #include "fl/stl/stdint.h"
 #include "fl/stl/string.h"
@@ -542,30 +543,31 @@ FL_TEST_CASE("Json2 Tests") {
         
         // First verify that the serialized JSON has the correct structure
         FL_CHECK(doc.is_object());
-        FL_CHECK(doc.contains("map"));
-        
-        json mapObj = doc["map"];
-        FL_CHECK(mapObj.is_object());
-        FL_CHECK(mapObj.contains("strip1"));
-        FL_CHECK(mapObj.contains("strip2"));
-        
-        json strip1Obj = mapObj["strip1"];
-        json strip2Obj = mapObj["strip2"];
-        FL_CHECK(strip1Obj.is_object());
-        FL_CHECK(strip2Obj.is_object());
-        
-        FL_CHECK(strip1Obj.contains("x"));
-        FL_CHECK(strip1Obj.contains("y"));
-        FL_CHECK(strip1Obj.contains("diameter"));
-        FL_CHECK(strip2Obj.contains("x"));
-        FL_CHECK(strip2Obj.contains("y"));
-        FL_CHECK(strip2Obj.contains("diameter"));
+        FL_CHECK(doc.contains("version"));
+        FL_CHECK(doc.contains("groups"));
+        FL_CHECK(doc.contains("segments"));
+
+        json groupsObj = doc["groups"];
+        FL_CHECK(groupsObj.is_object());
+        FL_CHECK(groupsObj.contains("strip1"));
+        FL_CHECK(groupsObj.contains("strip2"));
+
+        json segmentsArr = doc["segments"];
+        FL_CHECK(segmentsArr.is_array());
+        FL_CHECK_EQ(segmentsArr.size(), 2);
+
+        json firstSegment = segmentsArr[0];
+        FL_CHECK(firstSegment.is_object());
+        FL_CHECK(firstSegment.contains("id"));
+        FL_CHECK(firstSegment.contains("x"));
+        FL_CHECK(firstSegment.contains("y"));
+        FL_CHECK(firstSegment.contains("diameter"));
         
         // Also test with string serialization
         fl::string jsonBuffer = doc.to_string();
         json parsedJson = json::parse(jsonBuffer.c_str());
         FL_CHECK(parsedJson.is_object());
-        FL_CHECK(parsedJson.contains("map"));
+        FL_CHECK(parsedJson.contains("segments"));
         
         // Parse it back using new json2 implementation
         fl::flat_map<fl::string, fl::ScreenMap> parsedSegmentMaps;
@@ -1595,6 +1597,64 @@ FL_TEST_CASE("json set() with various integer types") {
         FL_REQUIRE(underflow8.has_value()); // Still returns a value
         FL_CHECK_EQ(*underflow8, 127); // Wraps around to maximum value
     }
+}
+
+FL_TEST_CASE("json fixed_point converts through float storage") {
+    using FP = fl::fixed_point<16, 16>;
+    const FP original = FP::from_raw(0x00018000);
+
+    json value(original);
+    auto extracted = value.as_fixed_point<FP>();
+    FL_REQUIRE(extracted.has_value());
+    FL_CHECK_EQ(extracted->raw(), original.raw());
+
+    json assigned;
+    assigned = original;
+    auto assigned_value = assigned.as_fixed_point<FP>();
+    FL_REQUIRE(assigned_value.has_value());
+    FL_CHECK_EQ(assigned_value->raw(), original.raw());
+
+    json obj = json::object();
+    obj.set("gain", original);
+    auto object_value = obj["gain"].as_fixed_point<FP>();
+    FL_REQUIRE(object_value.has_value());
+    FL_CHECK_EQ(object_value->raw(), original.raw());
+}
+
+FL_TEST_CASE("json fixed_point IEEE conversion saturates oversized magnitudes") {
+    const u64 sixty_bit_magnitude = u64(1) << 59;
+    FL_CHECK_EQ(
+        fl::detail::json_ieee754_float_bits_from_scaled_u64(
+            0, sixty_bit_magnitude, 80),
+        0x7F800000u);
+    FL_CHECK_EQ(
+        fl::detail::json_ieee754_float_bits_from_scaled_u64(
+            0x80000000u, sixty_bit_magnitude, 80),
+        0xFF800000u);
+}
+
+FL_TEST_CASE("json double input uses IEEE bit conversion") {
+    const double one = fl::bit_cast<double>(0x3FF0000000000000ull);
+    json value(one);
+    auto as_float = value.as<float>();
+    FL_REQUIRE(as_float.has_value());
+    FL_CHECK_EQ(fl::bit_cast<u32>(*as_float), 0x3F800000u);
+
+    json assigned;
+    assigned = fl::bit_cast<double>(0x4004000000000000ull);
+    auto assigned_float = assigned.as<float>();
+    FL_REQUIRE(assigned_float.has_value());
+    FL_CHECK_EQ(fl::bit_cast<u32>(*assigned_float), 0x40200000u);
+
+    json overflow(fl::bit_cast<double>(0x7FEFFFFFFFFFFFFFull));
+    auto overflow_float = overflow.as<float>();
+    FL_REQUIRE(overflow_float.has_value());
+    FL_CHECK_EQ(fl::bit_cast<u32>(*overflow_float), 0x7F800000u);
+
+    json nan_value(fl::bit_cast<double>(0x7FF8000000000001ull));
+    auto nan_float = nan_value.as<float>();
+    FL_REQUIRE(nan_float.has_value());
+    FL_CHECK_EQ(fl::bit_cast<u32>(*nan_float), 0x7FC00000u);
 }
 
 FL_TEST_CASE("json generic integer setter comprehensive test") {
@@ -2655,4 +2715,107 @@ FL_TEST_CASE("Const json operator[] with multiple keys") {
     FL_CHECK(boolVal == true);
 }
 
+// FastLED #4899: serialization sizes its output exactly before writing.
+// A large, nested, escape-heavy document must serialize byte-for-byte and
+// round-trip unchanged.
+FL_TEST_CASE("json serializes large nested escaped documents exactly") {
+    json root = json::array();
+    fl::string expected = "[";
+    for (int i = 0; i < 300; ++i) {
+        json flags = json::array();
+        flags.push_back(true);
+        flags.push_back(false);
+        json fields = json::array();
+        fl::string name = "n\"\\\n\r\t\b\f";
+        name.append(i);
+        fields.push_back(name);
+        fields.push_back(i);
+        fields.push_back(flags);
+        json entry = json::object();
+        entry.set("m", fields);
+        root.push_back(entry);
+
+        if (i > 0) expected += ",";
+        expected += "{\"m\":[\"n\\\"\\\\\\n\\r\\t\\b\\f";
+        expected.append(i);
+        expected += "\",";
+        expected.append(i);
+        expected += ",[true,false]]}";
+    }
+    expected += "]";
+
+    fl::string out = root.to_string();
+    FL_CHECK_EQ(out.size(), expected.size());
+    FL_CHECK(out == expected);
+
+    json reparsed = json::parse(out);
+    FL_CHECK(reparsed.to_string() == expected);
+}
+
+FL_TEST_CASE("json write_to streams the same bytes as to_string") {
+    json root = json::array();
+    for (int i = 0; i < 100; ++i) {
+        json entry = json::object();
+        entry.set("name", "method\"name\n");
+        entry.set("index", i);
+        root.push_back(entry);
+    }
+    struct Capture {
+        fl::string out;
+        int calls = 0;
+        fl::size largest = 0;
+    } cap;
+    root.write_to(
+        [](void* ctx, const char* data, fl::size len) {
+            Capture* c = static_cast<Capture*>(ctx);
+            c->out.append(data, len);
+            ++c->calls;
+            if (len > c->largest) c->largest = len;
+        },
+        &cap);
+    FL_CHECK(cap.out == root.to_string());
+    FL_CHECK_GT(cap.calls, 1);
+    FL_CHECK_LE(cap.largest, 64u);
+
+    json empty;
+    Capture none;
+    empty.write_to(
+        [](void* ctx, const char* data, fl::size len) {
+            static_cast<Capture*>(ctx)->out.append(data, len);
+        },
+        &none);
+    FL_CHECK(none.out == "null");
+}
+
+FL_TEST_CASE("json escapes remaining control characters as \\u00XX") {
+    fl::string raw;
+    raw.push_back('\x01');
+    raw.push_back('\x1b');
+    raw.push_back('\x1f');
+    json arr = json::array();
+    arr.push_back(raw);
+    FL_CHECK(arr.to_string() == "[\"\\u0001\\u001b\\u001f\"]");
+
+    json reparsed = json::parse(arr.to_string());
+    FL_REQUIRE(reparsed.is_array());
+    fl::string back = reparsed[0] | fl::string();
+    FL_CHECK(back == raw);
+}
+
+FL_TEST_CASE("json parses \\u escapes as UTF-8") {
+    json doc = json::parse("[\"\\u00e9\\u20ac\\ud83d\\ude00\\u0041\"]");
+    FL_REQUIRE(doc.is_array());
+    fl::string s = doc[0] | fl::string();
+    FL_CHECK(s == "\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80" "A");
+}
+
+
+FL_TEST_CASE("json parse - unpaired surrogates become U+FFFD") {
+    json doc = json::parse("[\"\\ud800x\\udc00\"]");
+    FL_REQUIRE(doc.is_array());
+    fl::string s = doc[0] | fl::string();
+    FL_CHECK(s == "\xEF\xBF\xBD" "x" "\xEF\xBF\xBD");
+}
+
 } // FL_TEST_FILE
+
